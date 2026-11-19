@@ -1,0 +1,27 @@
+{ "cast": [ { "name": "Mara", "desc": "MARA, 30: short dark hair, long raincoat." }, { "name": "Joss", "desc": "JOSS, 24: curly hair, fisherman's jumper." } ],
+  "pages": [
+    { "note": "Ends on Mara's flat 'It is ten to ten.'",
+      "panels": [
+        { "job": "establish", "weight": 4, "shot": "wide", "angle": "high angle", "bg": "full", "action": "Ferry pier at night, one lamp. Mara stands at the end, small. Joss runs up the boards.",
+          "who": [ { "name": "Mara", "at": [0.75, 0.45], "size": "wide", "facing": "left" }, { "name": "Joss", "at": [0.25, 0.5], "size": "wide", "facing": "right" } ], "lines": [ { "id": "L001" } ] },
+        { "job": "talk", "weight": 2, "shot": "medium", "angle": "eye level", "bg": "white", "action": "Joss, out of breath, a shrug.", "who": [ { "name": "Joss", "at": [0.45, 0.4], "size": "medium", "facing": "right" } ], "lines": [ { "id": "L002" } ] },
+        { "job": "insert", "weight": 1, "shot": "insert", "bg": "white", "action": "Mara's wristwatch.", "who": [], "lines": [] },
+        { "job": "react", "weight": 3, "shot": "close", "angle": "low angle", "bg": "tone", "action": "Mara, not amused.", "who": [ { "name": "Mara", "at": [0.55, 0.45], "size": "close", "facing": "left" } ], "lines": [ { "id": "L003" } ] } ] },
+    { "note": "Ends on Mara's question and Joss's hand on the bag: what is in it?",
+      "panels": [
+        { "job": "act", "weight": 4, "shot": "full figure", "angle": "low angle", "bg": "simple", "action": "Joss sets a wet canvas bag on the boards.", "who": [ { "name": "Joss", "at": [0.4, 0.3], "size": "wide", "facing": "right" } ], "lines": [ { "id": "L004" } ] },
+        { "job": "talk", "weight": 2, "shot": "medium", "angle": "eye level", "bg": "white", "action": "Mara, arms crossed.", "who": [ { "name": "Mara", "at": [0.6, 0.4], "size": "medium", "facing": "left" } ], "lines": [ { "id": "L005" } ] },
+        { "job": "insert", "weight": 2, "shot": "extreme close", "bg": "white", "action": "Joss's hand on the bag's buckle.", "who": [], "lines": [] } ] },
+    { "note": "The lamp. Ends on 'She kept it burning.'",
+      "panels": [
+        { "job": "big", "weight": 5, "reveal": true, "splash": true, "shot": "close", "angle": "from above", "bg": "tone", "action": "The open bag: their mother's brass ferry lamp, lit, light on both their faces.",
+          "who": [ { "name": "Joss", "at": [0.3, 0.3], "size": "medium", "facing": "down" } ], "lines": [ { "id": "L006" } ] },
+        { "job": "react", "weight": 1, "shot": "extreme close", "angle": "eye level", "bg": "white", "action": "Mara's eyes, wide.", "who": [ { "name": "Mara", "at": [0.5, 0.5], "size": "close", "facing": "left" } ], "lines": [] } ] },
+    { "note": "Ends on Mara's shout: she is not angry, she is hurt.",
+      "panels": [
+        { "job": "establish", "weight": 3, "shot": "wide", "angle": "eye level", "bg": "full", "action": "The ferry deck, the lamp between them on the bench. Dark water.",
+          "who": [ { "name": "Mara", "at": [0.7, 0.4], "size": "wide", "facing": "left" }, { "name": "Joss", "at": [0.3, 0.4], "size": "wide", "facing": "right" } ], "lines": [ { "id": "L007" } ] },
+        { "job": "talk", "weight": 2, "shot": "medium", "angle": "high angle", "bg": "white", "action": "Joss looks at the lamp, not at her.", "who": [ { "name": "Joss", "at": [0.4, 0.4], "size": "medium", "facing": "right" } ], "lines": [ { "id": "L008" } ] },
+        { "job": "react", "weight": 1, "shot": "insert", "bg": "white", "action": "Mara's hand tightens on the rail.", "who": [], "lines": [] },
+        { "job": "big", "weight": 5, "face": "big", "shot": "close", "angle": "low angle", "bg": "tone", "action": "Mara turns on him.", "who": [ { "name": "Mara", "at": [0.55, 0.4], "size": "close", "facing": "left" } ], "lines": [ { "id": "L009", "kind": "shout" } ] } ] }
+  ] }

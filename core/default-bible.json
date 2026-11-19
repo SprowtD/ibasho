@@ -1,0 +1,13 @@
+{
+ "project": "",
+ "header": "Use case: illustration-story. Create ONE finished BLACK-AND-WHITE manga page ARTWORK, portrait 2:3, 1024x1536. English left-to-right reading. Original series.",
+ "no_text": "NO TEXT: no letters, words, captions, page numbers, sound effects or signatures. NO speech balloons, thought bubbles or caption boxes, and no empty ones. Lettering is added later by a separate tool. Signs, bottles, screens, flyers, phones and clothes carry NO writing unless the panel description asks for it.",
+ "style": "Style: a LIGHT, LOOSE, HAND-DRAWN weekly manga page, drawn quickly by one artist with a fine pen on paper. This is NOT polished digital art. Thin, scratchy pen lines of uneven weight, with a natural wobble; some lines overshoot at corners or do not quite close; a few visible sketchy double strokes. LOW DETAIL: simple shapes, few interior lines, simple clothing folds, simple hands. Lots of empty white paper on every page. Tone is used sparingly: one light flat mechanical dot screentone, laid in simple shapes, with a little quick pen hatching. NO smooth gradients, NO airbrush, NO glossy reflections or shine, NO digital glow, NO dense rendering. Faces are very simple: dots or short lines for the nose and mouth, emotion carried by eyes, eyebrows and a few hatched blush lines. Comedy shorthand on light moments: puffed cheeks, an anger mark, a sweat drop, simplified cartoon eyes. Backgrounds, where asked for, are a few quick thin ruler lines, left mostly white; otherwise plain white paper. Solid black is used only where a panel description asks for it. No colour anywhere. White gutters, thin hand-ruled black panel borders, 3% white outer margin with the bottom margin left empty and clear of artwork. NOT a contact sheet of the references. Do not copy any labels or text from the reference sheets.",
+ "cast_intro": "Cast (draw everyone in this series' art style; where a reference picture is attached, match it):",
+ "cast": {},
+ "tones": "",
+ "rules": [],
+ "ref_root": "",
+ "style_id": "loose-pen",
+ "colour": false
+}

@@ -1,0 +1,58 @@
+[
+ {
+  "id": "loose-pen",
+  "name": "Loose pen",
+  "colour": false,
+  "blurb": "Light, quick, hand-drawn black and white. Lots of white paper, one dot tone.",
+  "style": "Style: a LIGHT, LOOSE, HAND-DRAWN weekly manga page, drawn quickly by one artist with a fine pen on paper. This is NOT polished digital art. Thin, scratchy pen lines of uneven weight, with a natural wobble; some lines overshoot at corners or do not quite close; a few visible sketchy double strokes. LOW DETAIL: simple shapes, few interior lines, simple clothing folds, simple hands. Lots of empty white paper on every page. Tone is used sparingly: one light flat mechanical dot screentone, laid in simple shapes, with a little quick pen hatching. NO smooth gradients, NO airbrush, NO glossy reflections or shine, NO digital glow, NO dense rendering. Faces are very simple: dots or short lines for the nose and mouth, emotion carried by eyes, eyebrows and a few hatched blush lines. Comedy shorthand on light moments: puffed cheeks, an anger mark, a sweat drop, simplified cartoon eyes. Backgrounds, where asked for, are a few quick thin ruler lines, left mostly white; otherwise plain white paper. Solid black is used only where a panel description asks for it. No colour anywhere. White gutters, thin hand-ruled black panel borders, 3% white outer margin with the bottom margin left empty and clear of artwork. NOT a contact sheet of the references. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/loose-pen.jpg"
+ },
+ {
+  "id": "clean-ink",
+  "name": "Clean ink",
+  "colour": false,
+  "blurb": "Crisp inked black and white with solid blacks and screentone, like a printed weekly.",
+  "style": "Style: a CLEAN, CONFIDENT BLACK-AND-WHITE manga drawing, inked for print. Crisp black ink lines of controlled, varied weight: thicker on outlines, fine inside. Solid black is used with purpose for hair, shadows and night; mechanical dot screentone in two or three flat greys for clothes, skin shadow and backgrounds. Clear, readable shapes and strong silhouettes. Faces are expressive, with clean eyes and simple noses; emotion is carried by eyes, brows and mouth. Backgrounds, where asked for, are properly drawn with ruled perspective; otherwise flat tone or white. NO colour anywhere, NO soft airbrush gradients, NO pencil sketch lines, NO 3D render look. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/clean-ink.jpg"
+ },
+ {
+  "id": "ink-wash",
+  "name": "Ink and wash",
+  "colour": false,
+  "blurb": "Brush lines and grey ink wash. Moody, strong light and dark.",
+  "style": "Style: BLACK INK AND GREY WASH on paper. Brush-pen lines that swell and taper, with some dry-brush texture. Shading is diluted ink wash in soft greys, pooled in the shadows; deep solid black for night, hair and dramatic moments; bare paper white for light. Moody and atmospheric, with strong light and dark. Backgrounds are suggested with wash and a few brush strokes. Faces are simple and readable. NO colour anywhere, NO mechanical screentone, NO clean vector lines, NO 3D render look. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/ink-wash.jpg"
+ },
+ {
+  "id": "watercolour",
+  "name": "Pen and watercolour",
+  "colour": true,
+  "blurb": "The loose pen line with soft, pale colour washes.",
+  "style": "Style: a LIGHT, LOOSE, HAND-DRAWN pen drawing coloured with SOFT WATERCOLOUR. Thin, slightly wobbly pen lines of uneven weight, drawn quickly by one artist. Colour is laid in pale, transparent washes that stay a little inside or outside the lines, with paper white left showing in highlights and around the edges. A gentle, limited palette; shadows are a second wash of the same colour, never black. Backgrounds are a few quick lines and one or two washes, fading to white paper. Faces are very simple: dots or short lines for the nose and mouth, a light wash of blush. NO flat digital fills, NO glossy shine, NO dense rendering, NO 3D render look. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/watercolour.jpg"
+ },
+ {
+  "id": "flat-colour",
+  "name": "Flat colour",
+  "colour": true,
+  "blurb": "Clean outlines and flat anime-cel colour with hard shadows.",
+  "style": "Style: FULL-COLOUR, FLAT CEL illustration in an anime manner. Clean, even dark outlines. Flat fills of colour with one hard-edged shadow tone per surface and a small hard highlight on hair and eyes; no soft blending. A bright, clear, limited palette; skin in warm flat tones. Backgrounds are painted simply in flat shapes. Faces: large clear eyes, small nose and mouth. NO painterly brushwork, NO heavy gradients, NO photographic textures, NO 3D render look. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/flat-colour.jpg"
+ },
+ {
+  "id": "webtoon",
+  "name": "Soft webtoon",
+  "colour": true,
+  "blurb": "Bright, polished colour with smooth shading and glow.",
+  "style": "Style: FULL-COLOUR WEBTOON illustration, bright and polished. Fine, clean line art. Smooth soft shading with gentle gradients on skin, hair and cloth, a soft rim of light, glossy highlights in eyes and hair. A saturated, modern palette with one accent colour per scene. Backgrounds are softly painted and a little blurred behind the figures, with glow from lamps and windows. NO screentone, NO rough sketch lines, NO flat cel fills, NO 3D render look. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/webtoon.jpg"
+ },
+ {
+  "id": "loose-doodle",
+  "name": "Loose doodle",
+  "colour": true,
+  "blurb": "A plain, home-made colour doodle: wobbly lines, flat calm colours, sleepy faces.",
+  "style": "Style: a PLAIN, HOME-MADE DOODLE in an anime manner, in colour. Not commercial quality and not trying to be beautiful: the kind of picture someone who draws often makes quickly, without effort or polish. CHARACTER DESIGN: simple manga characters with slightly large heads; a rounded egg-shaped face with a slightly pointed chin. Eyes are simplified tall ovals or soft rectangles with almost nothing drawn inside; one slightly thicker line for the upper lid and no lower lid. Thin short eyebrows, a nose that is one small slanted line, a small mouth that is a short line or a small oval. The resting expression is blank and a little sleepy; other emotions stay small and plain. Blush is two short slanted strokes on each cheek. Hair is a few large clumps in one flat colour, with uneven tips that poke out here and there; no single hairs. Nobody is made cute or pretty on purpose. LINE AND COLOUR: thin black to dark grey lines, a little clumsy, with a slight wobble; strokes overlap, break off or overshoot, and outline ends are left open. Line weight changes by accident, not by design; curves are not too smooth and sometimes a little angular. Colour is calm, low-saturation flat fills with almost no shadow (one simple shadow tone at most), no gradients, plain even light, very little texture. COMPOSITION AND FINISH: plain, direct compositions. Clothing folds are a few lines. Backgrounds, where asked for, are a few loose lines with flat muted colour; otherwise plain white. Neither skilful nor bad: an ordinary, anonymous hand-drawn look. AVOID: high detail, commercial anime polish, refined line art, sparkling eyes or big eye highlights, pretty idealised faces, carefully drawn hair, dramatic or glossy lighting, realistic textures, a 3D render look, heavy exaggeration or broken anatomy. Do not copy any labels or text from the reference sheets.",
+  "example": "styles/loose-doodle.jpg"
+ }
+]

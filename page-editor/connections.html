@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/ibasho-mark.svg" type="image/svg+xml">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Connections · Ibasho</title>
+<style>
+  body { margin: 0; }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 18px 16px 40px; }
+  h2 { font-size: 1.35rem; margin: 4px 0 4px; }
+  h3 { font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; font-weight: 700; }
+  .lede { color: var(--muted); margin: 0 0 6px; max-width: 70ch; }
+  .routes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 46%), 1fr)); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
+  .route { padding: 10px 12px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); min-width: 0; }
+  .route b { display: block; font-size: .78rem; color: var(--muted); font-weight: 600; }
+  .route span { font-weight: 650; }
+  .route .none { color: var(--muted); font-weight: 500; }
+  .route small { display: block; color: var(--muted); font-size: .75rem; margin-top: 2px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .card.on { border-color: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+  .card.fail { border-color: color-mix(in srgb, var(--red) 55%, var(--line)); }
+  .card.soon { opacity: .62; }
+  .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .top .nm { font-weight: 700; font-size: 1.02rem; }
+  .top .by { color: var(--muted); font-size: .85rem; flex: 1 1 140px; }
+  .pill { font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--raise); color: var(--muted); border: 1px solid var(--line-2); white-space: nowrap; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .pill.bad { background: var(--red-soft); color: var(--red); border-color: transparent; }
+  .kinds { display: flex; flex-wrap: wrap; gap: 4px; }
+  .kind { font-size: .74rem; padding: 1px 7px; border-radius: 3px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+  .help { color: var(--muted); font-size: .86rem; margin: 0; overflow-wrap: anywhere; }
+  .help a { color: var(--blue); }
+  .msg { font-size: .86rem; margin: 0; overflow-wrap: anywhere; }
+  .msg.ok { color: var(--ok); } .msg.bad { color: var(--red); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .row input { flex: 1 1 180px; min-width: 0; min-height: 40px; padding: 6px 10px; font: inherit; font-family: var(--mono); font-size: .86rem; }
+  .row .btn { min-height: 40px; }
+  .saved { flex: 1 1 100%; color: var(--muted); font-size: .86rem; overflow-wrap: anywhere; }
+  .saved code { white-space: nowrap; }
+  @media (max-width: 520px) { .route { padding: 8px 10px; } .route span { font-size: .92rem; } }
+  .safe { margin-top: 26px; font-size: .86rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; max-width: 80ch; }
+  .spend { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 12px 14px; }
+  .spend .big { font-size: 1.5rem; font-weight: 750; }
+  .spend .sub { color: var(--muted); font-size: .86rem; }
+  .spend .set { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0 4px; align-items: end; }
+  .spend label { display: flex; flex-direction: column; gap: 4px; font-size: .84rem; color: var(--muted); }
+  .spend input { width: 9em; min-height: 40px; padding: 6px 10px; font: inherit; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); border-radius: var(--r); }
+  .spend table { width: 100%; border-collapse: collapse; font-size: .86rem; margin-top: 8px; }
+  .spend td { padding: 5px 4px; border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+  .spend td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .spend details { margin-top: 10px; }
+  .lic { border-top: 1px solid var(--line); padding: 10px 0; }
+  .lic:first-of-type { border-top: 0; }
+  .lic .nm { font-weight: 700; } .lic .warn { color: var(--amber); font-size: .86rem; margin: 4px 0; }
+  .lic .okk { color: var(--ok); font-size: .86rem; margin: 4px 0; }
+  .lic label.sw { display: inline-flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--ink); cursor: pointer; margin-top: 4px; }
+  .lic label.sw input { width: 20px; height: 20px; min-height: 0; }
+  .gt { width: 100%; border-collapse: collapse; font-size: .84rem; margin-top: 10px; }
+  .gt th, .gt td { padding: 6px 5px; border-top: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  .gt th:first-child, .gt td:first-child { text-align: left; }
+  .gt .live { color: var(--ok); font-weight: 650; } .gt .best { outline: 1px solid var(--ok); outline-offset: -2px; border-radius: 3px; }
+  .gwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--bg); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); }
+</style>
+<link rel="stylesheet" href="/studio.css?v=13">
+<script src="/price.js?v=20261118b"></script>
+<script src="/studio.js?v=10"></script>
+</head>
+<body>
+<header class="appbar">
+  <a class="brand" href="/#home"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><filter id="ibs-wear"><feTurbulence baseFrequency="1.6" numOctaves="2" seed="3"/><feDisplacementMap in="SourceGraphic" scale="0.55"/></filter><mask id="ibs-cut"><rect width="24" height="24" fill="#fff"/><path d="M2 10.2h11.2V2M12.8 22v-8.2H22" fill="none" stroke="#000" stroke-width="1.6"/></mask></defs><g filter="url(#ibs-wear)"><rect x="2" y="2" width="20" height="20" rx="2.4" fill="currentColor" mask="url(#ibs-cut)"/></g></svg>Ibasho</a>
+  <nav class="ws" aria-label="Workspace">
+    <a class="wsb" href="/#home">Home</a>
+    <a class="wsb" href="/">Manga</a>
+    <a class="wsb" href="/anime/#/">Anime</a>
+    <a class="wsb" href="/create">Create</a>
+  </nav>
+  <span class="spacer"></span>
+  <button class="iconbtn" id="settingsBtn" type="button" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.8"/></svg></button>
+  <button class="iconbtn" id="themeBtn" type="button"></button>
+</header>
+
+<main class="wrap">
+  <h2>Connections</h2>
+  <p class="lede">Link the services you already use. Each kind of job goes to the cheapest connected service that can do it. Testing a connection is free: it only reads your account.</p>
+
+  <h3 id="spending">Spending</h3>
+  <div class="spend" id="spendBox"><p class="lede">Loading…</p></div>
+
+  <h3>Models</h3>
+  <div class="routes" id="models"><div class="route"><span class="none">Loading…</span></div></div>
+  <div class="row" style="margin-top:8px"><span class="saved" id="listsAt"></span><button class="btn" id="refreshLists">Refresh model lists</button></div>
+  <p class="msg" id="listsMsg" hidden></p>
+  <p class="lede" style="margin-top:6px">The model each kind of job uses everywhere in Ibasho. Writing = storyboards; pictures = manga panels and anime stills; video = an anime shot made from its picture.</p>
+
+  <h3 id="licences">Where you are and model licences</h3>
+  <div class="spend" id="licBox"><p class="lede">Loading…</p></div>
+
+  <h3 id="gpus">Renting a GPU</h3>
+  <details class="spend" id="gpuBox"><summary class="btn">Live prices an hour, for running open models later</summary><div id="gpuBody"><p class="lede">Loading…</p></div></details>
+
+  <h3>Other jobs: who would do them</h3>
+  <div class="routes" id="routes"><div class="route"><span class="none">Loading…</span></div></div>
+
+  <h3>Services</h3>
+  <div class="cards" id="cards"></div>
+
+  <p class="safe">Keys stay on the computer that runs Ibasho, in <code>saved/connections.json</code>, readable only by its owner. They are never shown again after you save them (only the last four characters), never put in git, and never sent to anyone but the service they belong to. Anyone who can open Ibasho on your network can use your connections, so only share its address with people you trust.</p>
+</main>
+
+<footer class="statusbar"><span class="status" id="status" role="status" aria-live="polite"></span></footer>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let S = null; const busy = new Set();
+  const say = (t) => { $("status").textContent = t || ""; };
+
+  async function call(method, path, body) {
+    const r = await fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Ibasho could not do that (" + r.status + ").");
+    return j;
+  }
+
+  function draw() {
+    if (!S) return;
+    const name = (id) => (S.providers.find((p) => p.id === id) || {}).name || id;
+    const kindName = Object.fromEntries(S.kinds.map((k) => [k.id, k.name]));
+    $("routes").innerHTML = S.kinds.filter((k) => !["text", "picture", "video"].includes(k.id)).map((k) => `<div class="route"><b>${esc(k.name)}</b>${k.use ? `<span>${esc(name(k.use))}</span>` : `<span class="none">Nothing connected</span>`}${k.options.length > 1 ? `<small>also: ${k.options.slice(1).map((o) => esc(name(o))).join(", ")}</small>` : ""}</div>`).join("");
+    $("cards").innerHTML = S.providers.map((p) => {
+      const ok = p.last && p.last.ok === true, fail = p.last && p.last.ok === false, on = p.connected && !fail;
+      const pill = p.soon ? `<span class="pill">Coming</span>` : fail ? `<span class="pill bad">Not working</span>` : on ? `<span class="pill ok">Connected</span>` : `<span class="pill">Not connected</span>`;
+      const kinds = `<div class="kinds">${p.kinds.map((k) => `<span class="kind">${esc(kindName[k] || k)}</span>`).join("")}</div>`;
+      const help = `<p class="help">${esc(p.help)} <a href="${esc(p.link)}" target="_blank" rel="noopener">Open ${esc(new URL(p.link).hostname.replace(/^www\./, ""))}</a></p>`;
+      const msg = p.last ? `<p class="msg ${p.last.ok === true ? "ok" : p.last.ok === false ? "bad" : ""}">${esc(p.last.msg)}</p>` : "";
+      const b = busy.has(p.id) ? " disabled" : "";
+      let act = "";
+      if (p.soon) act = "";
+      else if (p.how === "cli") act = `<div class="row"><button class="btn${on ? "" : " primary"}" data-a="check" data-id="${p.id}"${b}>${busy.has(p.id) ? "Checking…" : on ? "Check again" : "Check sign-in"}</button></div>`;
+      else if (p.connected) act = `<div class="row"><span class="saved">Saved: <code>${esc(p.hint)}</code></span><button class="btn" data-a="test" data-id="${p.id}"${b}>${busy.has(p.id) ? "Testing…" : "Test"}</button><button class="btn" data-a="change" data-id="${p.id}"${b}>Change</button><button class="btn danger" data-a="drop" data-id="${p.id}"${b}>Disconnect</button></div><div class="row" data-edit="${p.id}" hidden>${field(p)}</div>`;
+      else act = `<div class="row">${field(p)}</div>`;
+      return `<section class="card${on ? " on" : ""}${fail ? " fail" : ""}${p.soon ? " soon" : ""}" aria-label="${esc(p.name)}"><div class="top"><span class="nm">${esc(p.name)}</span><span class="by">${esc(p.by)}</span>${pill}</div>${kinds}${help}${msg}${act}</section>`;
+    }).join("");
+  }
+  function field(p) {
+    const ph = p.how === "url" ? "http://127.0.0.1:8188" : "Paste your " + (p.id === "replicate" ? "token" : "key");
+    return `<input type="${p.how === "url" ? "url" : "password"}" id="in-${p.id}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)} ${p.how === "url" ? "address" : "key"}"><button class="btn primary" data-a="save" data-id="${p.id}"${busy.has(p.id) ? " disabled" : ""}>${busy.has(p.id) ? "Testing…" : p.how === "url" ? "Connect" : "Save and test"}</button>`;
+  }
+
+  async function act(a, id) {
+    const p = S.providers.find((x) => x.id === id);
+    if (a === "change") { const r = document.querySelector(`[data-edit="${id}"]`); r.hidden = !r.hidden; if (!r.hidden) $("in-" + id).focus(); return; }
+    if (a === "drop" && !confirm(`Disconnect ${p.name}? Its key is deleted from this computer.`)) return;
+    let body;
+    if (a === "save") { const v = $("in-" + id).value.trim(); if (!v) { say("Paste the key first."); $("in-" + id).focus(); return; } body = { id, secret: v }; }
+    busy.add(id); draw(); say(a === "drop" ? "" : "Asking " + p.name + "…");
+    try {
+      S = a === "save" ? await call("POST", "/api/connections", body)
+        : a === "drop" ? await call("DELETE", "/api/connections?id=" + encodeURIComponent(id))
+        : await call("POST", "/api/connections/test", { id });
+      const now = S.providers.find((x) => x.id === id);
+      say(a === "drop" ? p.name + " disconnected." : now.last ? p.name + ": " + now.last.msg : "");
+    } catch (e) { say(e.message); }
+    busy.delete(id); draw(); drawModels();
+  }
+
+  const usd = (v) => "$" + (+v).toFixed(v < 0.1 && v > 0 ? 3 : 2);
+  async function drawSpend(fresh) {
+    if (!window.Ibasho || !window.Ibasho.spend) return; let d; try { d = await window.Ibasho.spend(fresh); } catch (e) { $("spendBox").innerHTML = `<p class="lede">Could not load the spending.</p>`; return; }
+    const st = d.settings, cap = st.cap;
+    $("spendBox").innerHTML = `<div class="big">${usd(d.total)} <span class="sub">this month (${esc(d.month)})${cap != null ? ` of your ${usd(cap)} cap` : ""}</span></div>
+      <div class="sub">${d.credit && d.credit.left != null ? `OpenRouter credit left: <b>${usd(d.credit.left)}</b>${d.credit.keyLimit ? " (this key's limit)" : ""}. ` : ""}Costs are OpenRouter's own figures; a line marked ≈ is our estimate. Codex costs nothing extra: it is in your plan.</div>
+      <div class="set"><label>Ask me first when a job costs over<input id="spAsk" type="number" min="0" step="0.05" inputmode="decimal" value="${esc(st.askOver ?? 0)}"></label>
+        <label>Monthly cap (empty = none)<input id="spCap" type="number" min="0" step="1" inputmode="decimal" value="${cap == null ? "" : esc(cap)}" placeholder="no cap"></label>
+        <button class="btn primary" id="spSave">Save</button></div>
+      <p class="sub" style="margin:2px 0 0">Every paid job asks first when its estimate is over the first number (0 = always ask). Nothing paid starts once the month's spending reaches the cap.</p>
+      ${d.byProject.length ? `<table aria-label="This month by project">${d.byProject.map((x) => `<tr><td>${esc(x.name)}</td><td class="n">${usd(x.usd)}</td></tr>`).join("")}</table>` : ""}
+      ${d.recent.length ? `<details><summary class="btn">Last ${d.recent.length} paid jobs</summary><table>${d.recent.map((x) => `<tr><td>${esc(new Date(x.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</td><td>${esc(x.project)} · ${esc(x.what)}<br><span class="sub">${esc((x.model || "").split("/").pop())}${x.quality ? " · " + esc(x.quality) : ""}</span></td><td class="n">${x.estimated ? "≈" : ""}${usd(x.usd)}</td></tr>`).join("")}</table></details>` : `<p class="sub">No paid jobs logged yet.</p>`}`;
+  }
+  $("spendBox").addEventListener("click", async (e) => { if (!e.target.closest("#spSave")) return;
+    try { const r = await fetch("/api/spend", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ askOver: $("spAsk").value, cap: $("spCap").value.trim() === "" ? null : $("spCap").value }) }); if (!r.ok) throw new Error(); say("Spending settings saved."); } catch (err) { say("Could not save the spending settings."); }
+    drawSpend(true); });
+  // ---------- where you are and licences: warnings and links, never a block ----------
+  async function drawLicences() {
+    let L; try { L = await call("GET", "/api/licences"); } catch (e) { $("licBox").innerHTML = `<p class="lede">Could not load the licences.</p>`; return; }
+    const reg = L.region || "";
+    $("licBox").innerHTML = `<label class="sub" style="display:flex;flex-direction:column;gap:4px;max-width:320px">Where you are (some model licences depend on it)<select id="licRegion" style="min-height:40px;font:inherit"><option value="">Not set</option>${L.regions.map(([k, n]) => `<option value="${k}" ${reg === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+      <p class="sub" style="margin:10px 0 2px">These open models need their maker's permission in some places. Ibasho never blocks them: it warns, links to where you apply, and lets you say you have permission.</p>
+      ${L.models.map((m) => `<div class="lic"><div class="nm">${esc(m.name)} <span class="sub">· ${esc(m.kind)}</span></div>
+        <div class="sub">${esc(m.licence)} · needs permission in ${esc(m.excluded.join(", "))}</div>
+        ${m.state === "needs-permission" ? `<p class="warn">${esc(m.message)}</p>` : m.state === "has-permission" ? `<p class="okk">You marked that you have permission${m.at ? " on " + esc(new Date(m.at).toLocaleDateString()) : ""}.</p>` : reg ? `<p class="okk">No permission needed where you are.</p>` : ""}
+        <div class="row">${m.link ? `<a class="btn" href="${esc(m.link)}" target="_blank" rel="noopener">Licence and how to apply</a>` : ""}
+        ${m.state !== "free" || m.on ? `<label class="sw"><input type="checkbox" data-perm="${esc(m.id)}" ${m.on ? "checked" : ""}> I have permission</label>` : ""}</div></div>`).join("")}`;
+    $("licBox").dataset.wording = L.wording;
+  }
+  $("licBox").addEventListener("change", async (e) => {
+    if (e.target.id === "licRegion") { try { await call("POST", "/api/permissions", { region: e.target.value }); say("Saved where you are."); } catch (err) { say(err.message); } return drawLicences(); }
+    const c = e.target.closest("[data-perm]"); if (!c) return; const w = $("licBox").dataset.wording;
+    if (c.checked && !confirm(w)) { c.checked = false; return; }
+    try { await call("POST", "/api/permissions", c.checked ? { model: c.dataset.perm, on: true, confirmed: w } : { model: c.dataset.perm, on: false }); say(c.checked ? "Saved, with today's date." : "Switched off."); } catch (err) { say(err.message); }
+    drawLicences();
+  });
+  // ---------- renting a GPU: live prices where the cloud publishes them ----------
+  async function drawGpus(fresh) {
+    let G; try { G = await call("GET", "/api/gpu-prices" + (fresh ? "?fresh=1" : "")); } catch (e) { $("gpuBody").innerHTML = `<p class="lede">Could not load the prices.</p>`; return; }
+    const cl = G.clouds.filter((c) => Object.keys(c.prices || {}).length), usd = (v) => (v == null ? "–" : "$" + (+v).toFixed(2));
+    $("gpuBody").innerHTML = `<p class="sub" style="margin:8px 0 0">Green = live now (${esc(new Date(G.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}); the rest are starting prices from ${esc(G.checked || "the list")}. A box marks the cheapest. Nothing is rented from here yet.</p>
+      <div class="gwrap"><table class="gt"><tr><th>GPU</th>${cl.map((c) => `<th>${esc(c.name.replace(/ \((.*)\)$/, " $1"))}</th>`).join("")}</tr>
+      ${G.gpus.map((g) => { const vals = cl.map((c) => c.prices[g]), min = Math.min(...vals.filter((v) => v > 0));
+        return `<tr><td>${esc(g)}</td>${cl.map((c) => { const v = c.prices[g], L = c.live && c.live[g]; return `<td class="${L ? "live" : ""} ${v === min ? "best" : ""}" title="${L && L.offers ? (L.offers >= 40 ? "40+" : L.offers) + " machines, cheapest in " + esc(L.where) : L && L.secure ? "secure cloud " + usd(L.secure) : ""}">${usd(v)}</td>`; }).join("")}</tr>`; }).join("")}</table></div>
+      <div class="row" style="margin-top:8px"><button class="btn" id="gpuFresh">Check prices again</button></div>`;
+  }
+  $("gpuBox").addEventListener("toggle", () => { if ($("gpuBox").open) drawGpus(); });
+  $("gpuBody").addEventListener("click", (e) => { if (e.target.id === "gpuFresh") { $("gpuBody").querySelector("#gpuFresh").textContent = "Checking…"; drawGpus(true); } });
+  // ---------- model lists: when they were fetched, and fetch again ----------
+  async function drawListsAt() { try { const c = await call("GET", "/api/models"); $("listsAt").textContent = c.fetched ? `Model lists and prices from ${c.fetched}.` : ""; } catch (e) { /* none */ } }
+  $("refreshLists").addEventListener("click", async () => {
+    const b = $("refreshLists"), m = $("listsMsg"); b.disabled = true; b.textContent = "Fetching the lists…"; m.hidden = true;
+    try { const r = await call("POST", "/api/models/refresh"); m.hidden = false; m.className = "msg " + (r.lost.length ? "bad" : "ok");
+      m.textContent = `Lists fetched (${r.fetched}): ${r.added} new model${r.added === 1 ? "" : "s"}, ${r.gone.length} gone.` + (r.lost.length ? ` Your ${r.lost.map((x) => x.kind + " model " + (x.name || x.model)).join(" and ")} ${r.lost.length === 1 ? "is" : "are"} no longer on OpenRouter: pick another below.` : "");
+      drawModels(); drawListsAt(); }
+    catch (e) { m.hidden = false; m.className = "msg bad"; m.textContent = e.message; }
+    b.disabled = false; b.textContent = "Refresh model lists";
+  });
+  async function drawModels() {
+    if (!window.Ibasho || !window.Ibasho.modelChoice) return;
+    const K = [["text", "Writing"], ["picture", "Pictures"], ["video", "Video"]], rows = [];
+    for (const [k, n] of K) { let c = null; try { c = await window.Ibasho.modelChoice(k); } catch (e) { /* none */ }
+      rows.push(`<div class="route"><b>${n}</b>${c ? `<span>${esc(c.name || c.model)}</span><small>${esc(c.off ? "not connected" : c.price || "")}</small>` : `<span class="none">Nothing connected</span>`}<button class="btn" style="margin-top:6px;min-height:34px" data-pick="${k}">Change</button></div>`); }
+    $("models").innerHTML = rows.join("");
+  }
+  $("models").addEventListener("click", async (e) => { const b = e.target.closest("[data-pick]"); if (!b) return; const o = await window.Ibasho.pickModel(b.dataset.pick); if (o) drawModels(); });
+  $("cards").addEventListener("click", (e) => { const b = e.target.closest("button[data-a]"); if (b) act(b.dataset.a, b.dataset.id); });
+  $("cards").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches("input[id^=in-]")) act("save", e.target.id.slice(3)); });
+
+  (async () => {
+    try { S = await call("GET", "/api/connections"); draw(); say(""); drawModels(); drawSpend(true); drawLicences(); drawListsAt(); if (location.hash === "#gpus") { $("gpuBox").open = true; drawGpus(); } if (location.hash === "#spending") setTimeout(() => $("spending").scrollIntoView(), 300); }
+    catch (e) { say("Could not load the connections: " + e.message); }
+    // Codex needs no key: look at its sign-in once when the screen opens, if it was never checked
+    if (S && !(S.providers.find((p) => p.id === "codex") || {}).last) act("check", "codex");
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+[
+ {
+  "id": "clean-tv",
+  "name": "Clean TV anime",
+  "text": "Clean modern TV anime: thin, even line work; flat cel colours with one shade tone and a soft rim light; softly painted backgrounds, slightly out of focus behind the characters; a gentle bloom on light sources; a natural film grade. Full colour."
+ },
+ {
+  "id": "classic-cel",
+  "name": "Classic cel",
+  "text": "Hand-painted cel animation of the 1990s: slightly uneven hand-inked lines; flat cel paint with one hard-edged shadow tone; a limited, slightly muted palette; backgrounds painted in gouache with visible brushwork; faint film grain and a soft halo around bright lights. Full colour."
+ },
+ {
+  "id": "soft-painted",
+  "name": "Soft painted film",
+  "text": "A hand-drawn feature film look: soft brown pencil-like line; characters in simple flat colours with very little shading; richly detailed backgrounds painted in watercolour and gouache; warm natural daylight and gentle, earthy colours. Full colour."
+ },
+ {
+  "id": "bold-action",
+  "name": "Bold action",
+  "text": "A bold action anime look: thick, confident outlines that vary in weight; strong contrast; saturated colours; hard-edged two-tone shadows; a bright rim light on every figure; deep perspective and dramatic angles. Full colour."
+ },
+ {
+  "id": "soft-pastel",
+  "name": "Soft pastel",
+  "text": "A soft, airy anime look: very thin lines drawn in colour, not black; a pastel palette; bright, high-key light with almost no shadow; small glowing highlights in eyes and hair; backgrounds in gentle gradients with little detail. Full colour."
+ }
+]

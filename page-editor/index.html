@@ -1,0 +1,738 @@
+<title>Ibasho</title>
+<link rel="icon" href="/ibasho-mark.svg" type="image/svg+xml">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: the page is the work surface; a narrow desk panel of controls sits beside it (below it on phones). */
+:root {
+  --bg: #e9ecef;        /* desk */
+  --surface: #ffffff;   /* panels */
+  --ink: #15181d;
+  --muted: #5b6370;
+  --line: #cfd5dc;
+  --blue: #2c63d6;      /* non-photo blue pencil: guides, selection, actions */
+  --blue-soft: #e3ebfb;
+  --red: #c4372b;
+  --amber: #a86400;
+  --ok: #2f7d4f;
+  --ui: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@font-face { font-family: "Playpen Sans"; src: url(fonts/PlaypenSans.ttf); font-weight: 100 800; }
+@font-face { font-family: "Bangers"; src: url(fonts/Bangers.ttf); font-weight: 400; }
+@font-face { font-family: "Vollkorn"; src: url(fonts/Vollkorn.ttf); font-weight: 400 900; }
+@font-face { font-family: "Patrick Hand"; src: url(fonts/PatrickHand.ttf); font-weight: 400; }
+@font-face { font-family: "Comic Neue"; src: url(fonts/ComicNeue-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "Kalam"; src: url(fonts/Kalam-Bold.ttf); font-weight: 700; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.4 var(--ui); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 32px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 10px; }
+.top h1 { font-size: 1.15rem; margin: 0; letter-spacing: .01em; }
+.top .proj { color: var(--muted); font-size: .9rem; }
+.status { margin-left: auto; font-size: .85rem; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.status[data-tone="ok"] { color: var(--ok); }
+.status[data-tone="warn"] { color: var(--amber); }
+.status[data-tone="error"] { color: var(--red); }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.tabs { display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.tab { border: 0; background: none; padding: 7px 12px; border-radius: 7px; font-weight: 700; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--blue-soft); color: var(--blue); }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 12px; font-weight: 700; min-height: 40px; }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.spacer { flex: 1; }
+.check-inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .9rem; }
+
+details.add { position: relative; }
+details.add summary { list-style: none; }
+details.add summary::-webkit-details-marker { display: none; }
+.addmenu { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; width: min(320px, 86vw); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-shadow: 0 10px 30px rgb(0 0 0 / .18); display: grid; gap: 2px; }
+.addmenu button { display: flex; gap: 10px; align-items: center; text-align: left; border: 0; background: none; padding: 8px; border-radius: 8px; }
+.addmenu button:hover { background: var(--blue-soft); }
+.addmenu small { display: block; color: var(--muted); }
+.addmenu svg, .kind svg { width: 28px; height: 28px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; }
+
+.work { display: grid; grid-template-columns: minmax(0, auto) minmax(280px, 360px); gap: 16px; align-items: start; justify-content: center; }
+.stage { display: flex; justify-content: center; min-width: 0; }
+#page { display: block; height: min(84vh, 1100px); max-width: 100%; aspect-ratio: 2 / 3; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .2), 0 8px 28px rgb(0 0 0 / .12); touch-action: none; user-select: none; -webkit-user-select: none; }
+#page .ol, #page .fl, #page .ov, #page .tx, #page .guides, #page text { pointer-events: none; }
+#page .g-panel { fill: none; stroke: #2c63d6; stroke-width: 2; stroke-dasharray: 10 8; opacity: .55; }
+#page .g-protect { fill: rgb(196 55 43 / .14); stroke: rgb(196 55 43 / .6); stroke-width: 2; stroke-dasharray: 6 6; }
+#page .hit { fill: transparent; cursor: grab; }
+#page .sel { fill: none; stroke: #2c63d6; stroke-width: 3; stroke-dasharray: 12 8; pointer-events: none; }
+#page .tail-guide { stroke: #2c63d6; stroke-width: 2; stroke-dasharray: 4 6; pointer-events: none; }
+#page .tail-handle { fill: rgb(44 99 214 / .18); stroke: #2c63d6; stroke-width: 3; cursor: crosshair; }
+#page .tail-dot { fill: #2c63d6; pointer-events: none; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 14px; min-width: 0; }
+.panel h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; }
+#inspector, #layoutPanel, #layoutTools, #panelTools, .tmpl-box, #artPanel, #artTools { display: grid; gap: 14px; }
+/* Sidebar: every page, and under the open page its panels. */
+.shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 16px; align-items: start; }
+.col { min-width: 0; }
+#side { overflow-x: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 8px; position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: thin; }
+#side h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 6px 8px 8px; }
+#side ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+#side ul ul { margin: 2px 0 6px 12px; padding-left: 8px; border-left: 2px solid var(--line); }
+.pgrow, .pnrow { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; border: 0; background: none; border-radius: 8px; padding: 8px; min-height: 40px; }
+.pgrow { font-weight: 700; }
+.pgrow:hover, .pnrow:hover { background: var(--bg); }
+.pgrow[aria-current="true"] { background: var(--blue-soft); color: var(--blue); }
+.pgrow .st { margin-left: auto; font: 500 .7rem var(--mono); color: var(--muted); white-space: nowrap; }
+.pnrow { font-size: .86rem; padding: 6px 8px; min-height: 36px; }
+.pnrow[aria-pressed="true"] { background: var(--blue-soft); color: var(--blue); font-weight: 700; }
+.pnrow .n { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid currentColor; font: 500 .7rem var(--mono); display: grid; place-items: center; }
+.pnrow .d { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { flex: none; font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.dot.art { border-color: var(--ok); color: var(--ok); }
+.dot.queued { border-color: var(--amber); background: var(--amber); color: #1a1210; }
+#sideBtn { display: none; }
+.grip { flex: none; display: grid; place-items: center; width: 22px; height: 28px; margin: -4px -4px -4px -6px; cursor: grab; touch-action: none; color: var(--muted); opacity: .55; }
+.grip:hover { opacity: 1; }
+.grip svg { width: 10px; height: 16px; fill: currentColor; }
+#side li.dragging > button { opacity: .4; }
+#side li.drop-before { box-shadow: 0 -3px 0 var(--blue); }
+#side li.drop-after { box-shadow: 0 3px 0 var(--blue); }
+#side.sorting, #side.sorting * { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+.side-tip { margin: 8px; font-size: .76rem; color: var(--muted); }
+#pageGen { display: grid; gap: 10px; }
+#homeView, #seriesView { display: grid; gap: 16px; }
+#exportsBox { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
+.exp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.exp-grid a { display: grid; gap: 4px; text-decoration: none; color: var(--muted); font: 500 .72rem var(--mono); }
+.exp-grid img { width: 100%; height: auto; background: #fff; border-radius: 4px; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+a.btn { text-decoration: none; color: inherit; display: inline-grid; place-items: center; }
+a.btn.primary { color: #fff; }
+.style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.scard { display: grid; gap: 6px; align-content: start; text-align: left; border: 2px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px; }
+.scard { min-width: 0; overflow: hidden; }
+#modeTabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 520px) { #modeTabs .tab { padding: 7px 9px; } }
+.scard[aria-pressed="true"] { border-color: var(--blue); background: var(--blue-soft); }
+.scard img, .scard .noimg { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 6px; background: var(--bg); display: block; }
+.scard b { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.scard small { color: var(--muted); }
+#seStyleMore summary { font-weight: 700; cursor: pointer; }
+.stylebtn { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; text-align: left; width: 100%; max-width: 560px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px; min-height: 56px; }
+.stylebtn img, .stylebtn .noimg { width: 120px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 6px; background: var(--bg); display: block; }
+.stylebtn b { display: block; }
+.stylebtn small { color: var(--muted); display: block; }
+.stylebtn .chg { font-weight: 700; color: var(--blue); white-space: nowrap; padding-right: 6px; }
+#styleDlg { border: 1px solid var(--line); border-radius: 16px; background: var(--bg); color: var(--ink); padding: 16px; width: min(880px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; }
+#styleDlg::backdrop { background: rgb(0 0 0 / .55); }
+.dlg-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; position: sticky; top: -16px; background: var(--bg); padding: 8px 0; z-index: 1; }
+.dlg-head h2 { margin: 0; font-size: 1.1rem; }
+#styleDlg .hint { margin: 0 0 12px; }
+@media (max-width: 520px) { #styleDlg .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } #styleDlg .scard small { font-size: .74rem; } .stylebtn { grid-template-columns: 84px minmax(0, 1fr) auto; } .stylebtn img, .stylebtn .noimg { width: 84px; } }
+.se-box { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; max-width: 860px; }
+#seStyle { font-size: .86rem; line-height: 1.45; }
+.cast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.ccard { display: grid; gap: 8px; align-content: start; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+.ccard .sheet { width: 100%; aspect-ratio: 3 / 2; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 8px; display: grid; place-items: center; color: var(--muted); font-size: .84rem; text-align: center; padding: 8px; }
+.ccard img.sheet { padding: 0; }
+.ccard textarea { min-height: 84px; font-size: .86rem; }
+.ccard .state { font-size: .82rem; font-weight: 700; color: var(--amber); margin: 0; }
+.ccard .state.bad { color: var(--red); }
+.bk-list { display: grid; gap: 10px; }
+.art-review { border: 1px solid var(--line); border-left: 4px solid var(--amber); border-radius: 8px; padding: 8px 10px; font-size: .88rem; }
+.art-review.ok { border-left-color: var(--ok); color: var(--muted); }
+.art-review ul { margin: 4px 0 6px; padding-left: 18px; }
+.from-book summary { cursor: pointer; font-size: .84rem; font-weight: 600; color: var(--muted); }
+.from-book .bk-text { border-top: 0; max-height: 40vh; }
+.bk-cast { margin-bottom: 14px; max-width: none; }
+.bk-cast p { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
+.bk-cast > details { border-top: 1px solid var(--line); padding-top: 8px; }
+.bk-cast > div > details { border-top: 1px solid var(--line); padding: 8px 0; }
+.bk-cast summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
+.bk-people { display: grid; gap: 8px; margin-top: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); }
+.bk-person { display: grid; gap: 6px; align-content: start; border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 10px; }
+.bk-person small { color: var(--muted); display: block; }
+.bk-person .look { margin: 0; color: var(--ink, inherit); font-size: .9rem; }
+.bk-person .none { margin: 0; font-size: .84rem; font-weight: 700; color: var(--amber); }
+.bk-person .in { font-size: .82rem; font-weight: 700; color: var(--muted); }
+.bk-person details summary { font-weight: 600; font-size: .84rem; color: var(--muted); }
+.bk-person blockquote { margin: 6px 0 0; padding-left: 8px; border-left: 2px solid var(--line); font-size: .86rem; line-height: 1.4; }
+#bkNotes { color: var(--muted); }
+.bk-ch { display: grid; gap: 8px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px 12px; }
+.bk-ch b { font-size: 1rem; }
+.bk-ch small { color: var(--muted); display: block; }
+.bk-ch .opens { margin: 0; color: var(--muted); font-size: .88rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.bk-ch .bar { display: block; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 4px; }
+.bk-ch .bar i { display: block; height: 100%; background: var(--ok, #2f8f5b); }
+.bk-ch .state { font-size: .82rem; font-weight: 700; color: var(--amber); }
+.bk-text { max-height: 60vh; overflow: auto; border-top: 1px solid var(--line); padding-top: 8px; font-size: .92rem; line-height: 1.5; }
+.bk-text p { margin: 0 0 .7em; }
+.bk-text .pid { font: 600 .68rem "JetBrains Mono", ui-monospace, monospace; color: var(--muted); margin-right: 6px; }
+.bcard .cover { aspect-ratio: 5 / 2; font-size: 1.6rem; font-weight: 700; color: var(--blue); }
+#homeView h2.sect { margin: 10px 0 0; font-size: 1.05rem; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.pcard { display: grid; gap: 6px; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px; align-content: start; }
+.pcard .cover { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top; border-radius: 6px; background: var(--bg); display: grid; place-items: center; color: var(--muted); font-size: .8rem; }
+.pcard b { font-size: .95rem; }
+.pcard small { color: var(--muted); }
+.pcard .state { font-size: .8rem; font-weight: 700; color: var(--amber); }
+.pcard .state.bad { color: var(--red); }
+.newproj summary { list-style: none; width: fit-content; }
+.newproj summary::-webkit-details-marker { display: none; }
+#newForm { display: grid; gap: 12px; margin-top: 12px; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; max-width: 720px; }
+#npHint { margin: 0; }
+#npGo { width: fit-content; }
+body.at-home #side, body.at-home .toolbar, body.at-home .proj, body.at-home #modeTabs, body.at-home .crumb { display: none !important; }
+[hidden] { display: none !important; }
+body.at-home .shell { grid-template-columns: minmax(0, 1fr); }
+#refList { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#refList li { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 8px; align-items: center; background: var(--bg); border-radius: 8px; padding: 6px; }
+.rthumb { width: 48px; height: 48px; border-radius: 6px; background: #fff center / cover no-repeat; border: 1px solid var(--line); display: block; object-fit: cover; }
+#refList b { display: block; font-size: .82rem; }
+#refList input { padding: 4px 6px; font-size: .8rem; background: var(--surface); }
+#refList .x { border: 0; background: none; color: var(--red); font-weight: 700; min-width: 36px; min-height: 36px; }
+#refAdd summary { list-style: none; text-align: center; }
+#refAdd summary::-webkit-details-marker { display: none; }
+.refmenu { display: grid; gap: 10px; margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+#refPane { display: grid; gap: 8px; }
+.refgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; max-height: 260px; overflow-y: auto; }
+.refgrid button { padding: 0; border: 2px solid transparent; border-radius: 8px; background: var(--bg); overflow: hidden; display: grid; font-size: .7rem; color: var(--muted); }
+.refgrid button[aria-pressed="true"] { border-color: var(--blue); }
+.refgrid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.refgrid .rthumb { width: 100%; height: auto; aspect-ratio: 1; border: 0; border-radius: 0; padding: 0; }
+.refgrid span:not(.rthumb) { padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#pageGen .hint { margin: 0; }
+#artBoard { margin: 4px 0 0; }
+#artNow { width: 96px; border-radius: 6px; border: 1px solid var(--line); }
+.queued-note { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--bg); border-left: 4px solid var(--amber); font-size: .9rem; }
+#genPrompt { min-height: 220px; font-size: .84rem; line-height: 1.45; }
+#genPrompt[readonly] { opacity: .75; }
+#genSrcHint, #genRefs { margin: 0; }
+.field label:has(.tag) { align-items: center; gap: 8px; }
+.tag { white-space: nowrap; font: 500 .7rem var(--mono); padding: 1px 6px; border-radius: 5px; background: var(--blue-soft); color: var(--blue); }
+#page .art-queued { fill: rgb(168 100 0 / .12); stroke: #a86400; stroke-width: 4; stroke-dasharray: 14 10; pointer-events: none; }
+#page .face-box { fill: rgb(44 99 214 / .08); stroke: #2c63d6; stroke-width: 3; pointer-events: none; }
+#page .face-box.guess { fill: rgb(168 100 0 / .1); stroke: #a86400; stroke-dasharray: 9 7; }
+#page .face-tag { font: 700 20px "Atkinson Hyperlegible", sans-serif; fill: #fff; paint-order: stroke; stroke: #2c63d6; stroke-width: 6px; stroke-linejoin: round; text-anchor: middle; pointer-events: none; }
+#page .face-tag.guess { stroke: #a86400; }
+#page.marking .phit { cursor: crosshair !important; }
+.people { display: grid; gap: 8px; }
+.person { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.person.guess { border-left: 4px solid var(--amber); }
+.person b { font-size: .95rem; }
+.person small { color: var(--muted); font-size: .84rem; }
+.note-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#sbDlg textarea { width: 100%; min-height: 96px; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: inherit; box-sizing: border-box; }
+#sbDlg { max-width: 560px; }
+#sbDlg .warnbox { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--bg); border-left: 4px solid var(--amber); font-size: .9rem; }
+#page .art-queued-t { font: 700 30px "Atkinson Hyperlegible", sans-serif; fill: #a86400; text-anchor: middle; }
+.segs { display: flex; gap: 4px; background: var(--bg); border-radius: 10px; padding: 3px; }
+.segs.wrap { flex-wrap: wrap; }
+.seg { flex: 1; border: 0; background: none; border-radius: 7px; padding: 7px 8px; font-weight: 700; font-size: .85rem; color: var(--muted); }
+.seg[aria-pressed="true"] { background: var(--surface); color: var(--blue); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.tray { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.thumb { padding: 0; border: 2px solid transparent; border-radius: 8px; background: var(--bg); aspect-ratio: 1; overflow: hidden; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb[aria-pressed="true"] { border-color: var(--blue); }
+.tmpl-box summary { list-style: none; text-align: center; }
+.tmpl-box summary::-webkit-details-marker { display: none; }
+.tmpls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; max-height: 420px; overflow-y: auto; }
+.chap-advice { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: .86rem; }
+.tmpl[data-fault] { opacity: .55; }
+.tmpl[data-best] { border-color: var(--accent, #d9482b); box-shadow: 0 0 0 1px var(--accent, #d9482b); }
+.tmpl { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 4px; display: grid; gap: 2px; font: 500 .68rem var(--mono); color: var(--muted); }
+.tmpl svg { width: 100%; height: auto; display: block; }
+#page.layout-mode .ol, #page.layout-mode .fl, #page.layout-mode .ov, #page.layout-mode .tx { opacity: .3; }
+#page .layout { pointer-events: none; }
+#page .phit { fill: transparent; cursor: move; }
+#page .gut { cursor: grab; }
+#page .gut-hit { stroke: transparent; stroke-width: 46; pointer-events: stroke; }
+#page .gut-line { stroke: #2c63d6; stroke-width: 3; stroke-dasharray: 8 6; opacity: .7; pointer-events: none; }
+#page .gut-knob { fill: #fff; stroke: #2c63d6; stroke-width: 4; }
+#page .tilt-knob { fill: #2c63d6; stroke: #fff; stroke-width: 3; cursor: ew-resize; }
+#page .inset-knob { fill: #2c63d6; stroke: #fff; stroke-width: 4; cursor: move; }
+#page .knob-icon { stroke: #fff; stroke-width: 3; fill: none; pointer-events: none; }
+#page .sel { stroke-linejoin: round; }
+#anchorWrap { display: grid; gap: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+#projSel { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 5px 8px; font-weight: 700; color: var(--muted); max-width: 70vw; }
+#tabs { overflow-x: auto; max-width: 100%; scrollbar-width: thin; }
+#tabs .tab { white-space: nowrap; }
+.page-note { margin: 0; font-size: .86rem; color: var(--muted); background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+#chapterView { display: grid; gap: 14px; }
+.chap-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; justify-content: space-between; }
+.chap-top h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.chap-top p { margin: 0; color: var(--muted); font-size: .9rem; }
+.chap-top .bad { color: var(--red); }
+#checkView { padding: 14px 16px 40px; max-width: 1500px; }
+#checkView .warn { color: var(--amber); } .linkbtn { border: 0; background: none; padding: 0; color: var(--blue); font: inherit; text-decoration: underline; cursor: pointer; }
+.ckg { margin-top: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 10px 12px; }
+.ckg summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ckg .chip.ok { color: var(--green, #3fa66a); } .cknote { margin: 8px 0 0; color: var(--amber); font-size: .88rem; }
+.ckl { display: flex; gap: 10px; overflow-x: auto; margin-top: 10px; padding-bottom: 6px; align-items: flex-start; }
+.ckl a { flex: none; } .ckl img { display: block; height: 240px; border-radius: 4px; background: #fff; }
+.cks { position: relative; } .cks img { height: 240px; max-width: 260px; object-fit: contain; border: 2px solid var(--blue); } .cks span { position: absolute; left: 6px; top: 6px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: var(--on-accent, #fff); font-size: .72rem; font-weight: 600; }
+.cks.none { display: grid; place-items: center; width: 150px; height: 240px; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); font-size: .8rem; text-align: center; padding: 8px; }
+.ckf { display: grid; grid-template-columns: 150px 1fr; gap: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ckf > img { width: 150px; border-radius: 4px; background: #fff; } .ckf p { margin: 4px 0 8px; } .ckf .ckm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .86rem; }
+.ckf.closed { opacity: .55; } .ckf .row { gap: 6px; flex-wrap: wrap; } .ckf .row .btn { flex: none; width: auto; }
+#checkView .chip { padding: 1px 7px; border: 1px solid var(--line); border-radius: 3px; font-size: .76rem; } #checkView .chip.warn { border-color: var(--amber); color: var(--amber); background: none; }
+.setrow { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; cursor: pointer; } .setrow input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+@media (max-width: 640px) { .ckf { grid-template-columns: 96px 1fr; } .ckf > img { width: 96px; } .ckl img, .cks img, .cks.none { height: 170px; } }
+.chap-issues { margin: 6px 0 0; padding-left: 18px; color: var(--red); font-size: .88rem; }
+.chap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.pg { display: grid; gap: 6px; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px; }
+.pg svg { width: 100%; height: auto; display: block; background: #fff; border-radius: 4px; box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.pg-meta { display: flex; justify-content: space-between; align-items: center; font-size: .9rem; }
+.pg-note { font-size: .78rem; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.chip.warn { background: var(--amber); color: #1a1210; font-size: .72rem; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
+#planBox { display: grid; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+#planList { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: .86rem; }
+#planList li { display: flex; gap: 8px; align-items: flex-start; }
+#planList small { display: block; color: var(--muted); }
+#planList .chip { flex: none; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 5px; background: var(--blue-soft); color: var(--blue); }
+#anchorWrap .hint { margin: 0 0 0 26px; }
+.empty { color: var(--muted); font-size: .95rem; }
+.kinds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.kind { display: grid; justify-items: center; gap: 2px; border: 1px solid var(--line); background: none; border-radius: 10px; padding: 6px 2px; font-size: .78rem; font-weight: 700; color: var(--muted); }
+.kind[aria-pressed="true"] { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+.hint { color: var(--muted); font-size: .85rem; margin: -6px 0 0; }
+.field { display: grid; gap: 4px; }
+.field label, .field .lbl { font-size: .85rem; font-weight: 700; display: flex; justify-content: space-between; }
+.field output { font-family: var(--mono); font-size: .8rem; color: var(--muted); font-weight: 500; }
+textarea, input[type="text"], select { width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+textarea { min-height: 70px; resize: vertical; }
+input[type="range"] { width: 100%; accent-color: var(--blue); }
+.toggles { display: grid; gap: 6px; }
+.toggles label { display: flex; gap: 8px; align-items: center; font-size: .92rem; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row .btn { flex: 1; }
+.btn.danger { color: var(--red); }
+.btn.link { border: 0; background: none; color: var(--blue); padding: 4px 0; min-height: 0; text-align: left; }
+
+.checks-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+#checkSummary { font-size: .85rem; font-weight: 700; }
+#checkSummary[data-tone="ok"] { color: var(--ok); }
+#checkSummary[data-tone="warn"] { color: var(--amber); }
+#checkSummary[data-tone="error"] { color: var(--red); }
+#checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+#checks button { display: flex; gap: 8px; text-align: left; width: 100%; border: 0; background: var(--bg); border-radius: 8px; padding: 7px 8px; font-size: .86rem; }
+#checks .chip { flex: none; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 5px; height: fit-content; }
+#checks [data-level="error"] .chip { background: var(--red); color: #fff; }
+#checks [data-level="warn"] .chip { background: var(--amber); color: #1a1210; }
+
+@media (max-width: 1040px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  #side { position: static; max-height: 46vh; display: none; }
+  body.side-open #side { display: block; }
+  #sideBtn { display: inline-block; }
+}
+@media (max-width: 760px) {
+  .work { grid-template-columns: minmax(0, 1fr); }
+  #page { width: 100%; height: auto; max-height: 62vh; }
+  .stage { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; background: var(--bg); padding-bottom: 6px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<link rel="stylesheet" href="studio.css?v=13">
+<script src="studio.js?v=10"></script>
+
+<header class="appbar">
+  <h1 class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><filter id="ibs-wear"><feTurbulence baseFrequency="1.6" numOctaves="2" seed="3"/><feDisplacementMap in="SourceGraphic" scale="0.55"/></filter><mask id="ibs-cut"><rect width="24" height="24" fill="#fff"/><path d="M2 10.2h11.2V2M12.8 22v-8.2H22" fill="none" stroke="#000" stroke-width="1.6"/></mask></defs><g filter="url(#ibs-wear)"><rect x="2" y="2" width="20" height="20" rx="2.4" fill="currentColor" mask="url(#ibs-cut)"/></g></svg>Ibasho</h1>
+  <nav class="ws" aria-label="Workspace">
+    <button class="wsb" id="homeBtn" type="button">Home</button>
+    <button class="wsb" id="mangaBtn" type="button">Manga</button>
+    <a class="wsb" id="animeLink" href="/anime/">Anime</a>
+    <a class="wsb" href="/create">Create</a>
+  </nav>
+  <label class="proj"><span class="sr">Project</span><select id="projSel"></select></label><span class="crumb" id="crumb" aria-live="polite"></span>
+  <span class="spacer"></span>
+  <button class="iconbtn" id="settingsBtn" type="button" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.8"/></svg></button>
+  <a class="iconbtn" href="/connections" aria-label="Connections: sign-ins and API keys" title="Connections: sign-ins and API keys"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0zM12 16v5"/></svg></a>
+  <button class="iconbtn" id="themeBtn" type="button"></button>
+</header>
+
+<div class="shell">
+<div class="tabs rail" id="modeTabs" role="tablist" aria-label="Tools" aria-orientation="vertical">
+  <button type="button" role="tab" class="tab" data-mode="letter" aria-selected="true" title="Letter (L)" aria-keyshortcuts="L"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9.5L4 19.5z"/></svg><span>Lettering</span></button>
+  <button type="button" role="tab" class="tab" data-mode="layout" aria-selected="false" title="Layout (Y)" aria-keyshortcuts="Y"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M3.5 10.5h9.5v-7M13 20.5v-7h7.5"/></svg><span>Layout</span></button>
+  <button type="button" role="tab" class="tab" data-mode="art" aria-selected="false" title="Art (A)" aria-keyshortcuts="A"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5l3.8-.9L19 7.9 16.1 5 5.4 15.7z"/><path d="M14 7.1l2.9 2.9"/></svg><span>Art</span></button>
+  <button type="button" role="tab" class="tab" data-mode="check" aria-selected="false" id="checkTab" title="Check (C)" aria-keyshortcuts="C"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg><span>Check</span></button>
+  <button type="button" role="tab" class="tab" data-mode="chapter" aria-selected="false" title="Chapter (H)" aria-keyshortcuts="H"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7.5" y="3.5" width="12" height="16" rx="1.5"/><path d="M4.5 7.5v12a1.5 1.5 0 0 0 1.5 1.5h10"/></svg><span>Chapter</span></button>
+  <button type="button" role="tab" class="tab" data-mode="series" aria-selected="false" id="seriesTab" title="Series (S)" aria-keyshortcuts="S"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 20c.6-3.6 3-5.6 6-5.6s5.4 2 6 5.6"/><circle cx="17" cy="9.5" r="2.4"/><path d="M16.2 14.6c2.5.3 4.2 2 4.8 4.9"/></svg><span>Series</span></button>
+</div>
+<nav id="side" aria-label="Pages and panels"></nav>
+<div class="col">
+<div class="resizer" id="sideGrip" role="separator" aria-orientation="vertical" aria-label="Pages list width. Drag, or use the arrow keys; double-click or Enter folds it away." tabindex="0"></div>
+<div class="toolbar">
+  <button class="btn" id="sideBtn" type="button" aria-expanded="false">Pages</button>
+  <details class="add" id="addDetails">
+    <summary class="btn primary" role="button">+ Add</summary>
+    <div class="addmenu" id="addMenu"></div>
+  </details>
+  <button class="btn" id="undoBtn" type="button" disabled>Undo</button>
+  <button class="btn" id="redoBtn" type="button" disabled>Redo</button>
+  <label class="check-inline"><input type="checkbox" id="guidesChk" checked> Guides</label>
+  <span class="spacer"></span>
+  <button class="btn" id="exportBtn" type="button">Export PNG</button>
+</div>
+
+<section id="homeView" hidden>
+  <div class="home-head"><h2>Studio</h2><p id="homeInfo"></p></div>
+  <section class="carry" id="homeBanner" aria-labelledby="carryT" hidden></section>
+  <div class="newrow">
+    <details class="newproj" id="newProj">
+    <summary class="btn primary" role="button">+ New project from a script</summary>
+    <form id="newForm">
+      <div class="field"><label for="npLike">Series</label><select id="npLike"><option value="">A new series</option></select><small class="hint" id="npLikeHint" style="margin:0"></small></div>
+      <div class="field"><label for="npName">Series name</label><input type="text" id="npName" required maxlength="80" placeholder="e.g. The Last Ferry"></div>
+      <div class="field"><label for="npChapter">Chapter number</label><input type="text" id="npChapter" inputmode="numeric" value="1" style="max-width:7em"></div>
+      <div class="field"><span class="lbl">Art style <output>you can change it later under Series</output></span>
+        <button type="button" class="stylebtn" id="npStyleBtn"></button></div>
+      <div class="field"><span class="lbl">Reading direction</span>
+        <div class="segs" id="npReading" role="group" aria-label="Reading direction"></div><small class="hint" id="npReadingHint" style="margin:0"></small></div>
+      <div class="field"><label for="npScript">Chapter script <output>any format: screenplay, prose or notes</output></label>
+        <textarea id="npScript" rows="10" placeholder="Paste the chapter here, or choose a file below."></textarea>
+        <input type="file" id="npFile" accept=".md,.txt,.markdown,text/plain,text/markdown"></div>
+      <p class="hint" id="npHint">The Paneler reads the script and storyboards the chapter with Codex. It takes a few minutes; every line is kept word for word.</p>
+      <button class="btn primary" type="submit" id="npGo">Create and storyboard</button>
+    </form>
+  </details>
+    <span id="booksWrap" hidden style="display:contents"><details class="newproj" id="newBook">
+      <summary class="btn" role="button">+ New book from a file</summary>
+      <form id="bookForm">
+        <div class="field"><label for="nbName">Book name</label><input type="text" id="nbName" required maxlength="80" placeholder="e.g. The Last Ferry, Book 1"></div>
+        <div class="field"><label for="nbFile">The text <output>.txt, .md, .docx or .epub</output></label><input type="file" id="nbFile" required accept=".txt,.md,.markdown,.docx,.epub,.json"></div>
+        <div class="field"><span class="lbl">Art style <output>you can change it later under Series</output></span>
+          <button type="button" class="stylebtn" id="nbStyleBtn"></button></div>
+        <div class="field"><span class="lbl">Reading direction <output>every chapter of the book reads this way</output></span>
+          <div class="segs" id="nbReading" role="group" aria-label="Reading direction"></div></div>
+        <p class="hint" id="nbHint">The file is read on this computer: every paragraph gets a number and the chapters are found from their headings. It takes a few seconds and draws nothing.</p>
+        <button class="btn primary" type="submit" id="nbGo">Import and find the chapters</button>
+      </form>
+    </details></span>
+    <a class="btn" id="newAnime" href="/anime/#/new" hidden>+ New anime scene</a>
+  </div>
+  <p class="flow-key" id="flowKey"><span><i style="background:var(--ok)"></i>done</span><span><i style="background:var(--blue)"></i>part done</span><span><i style="background:var(--amber)"></i>working</span><span><i style="background:var(--red)"></i>needs a look</span><span><i></i>not started</span><span>Press a step to go straight to it.</span></p>
+  <h3 class="sect-h" id="hMangaH">Manga chapters</h3>
+  <div class="plist" id="homeGrid"></div>
+  <h3 class="sect-h" id="hBooksH" hidden>Books <small>a long text split into chapters that share one style, cast and sheets</small></h3>
+  <div class="plist" id="bookGrid"></div>
+  <h3 class="sect-h" id="hAnimeH" hidden>Anime scenes <small>from a script, from nothing or from manga pages: shot list, plan check, blocking, grey 3D animatic, sound</small></h3>
+  <div class="plist" id="animeGrid"></div>
+</section>
+
+<section id="bookView" hidden>
+  <div class="chap-top chap-hero bk-hero"><div><h2 id="bkTitle"></h2><p id="bkInfo"></p></div><div class="row"><button class="btn" id="bkBack" type="button">All projects</button><a class="btn" id="bkZip" hidden>Download every exported chapter (zip)</a></div></div>
+  <ul class="chap-issues" id="bkNotes" hidden></ul>
+  <div class="se-box bk-cast" id="bkCast">
+    <div><b>People and places</b><p id="bkCastInfo"></p></div>
+    <div class="row"><button class="btn" id="bkCastGo" type="button">Find the people and places</button><button class="btn primary" id="bkCastAll" type="button" hidden></button></div>
+    <div id="bkCastList"></div>
+  </div>
+  <div class="bk-list" id="bkList"></div>
+</section>
+
+<section id="seriesView" hidden>
+  <div class="chap-top chap-hero se-hero"><div><span class="kick">Series</span><h2>The look and the cast</h2><p>The look every picture is drawn in, and the cast. A character with a sheet keeps one face, hair and outfit from panel to panel.</p></div></div>
+  <nav class="se-nav" aria-label="Series sections"><a href="#seStyleH">Style</a><a href="#seCastH">Characters</a><a href="#sePlacesH">Places</a><a href="#sePropsH">Props</a></nav>
+  <div class="chap-top" id="seStyleH"><div><h2>Art style</h2><p id="seStyleInfo"></p></div></div>
+  <button type="button" class="stylebtn" id="seStyleBtn"></button>
+  <details class="se-box" id="seStyleMore">
+    <summary>Fine-tune the style in words</summary>
+    <div class="field"><label for="seStyle">Style text <output>sent with every picture</output></label><textarea id="seStyle" rows="9"></textarea></div>
+    <label class="check-inline"><input type="checkbox" id="seColour"> This series is in colour</label>
+    <div class="row" id="seOwnRow"><button type="button" class="btn" id="seOwnTpl">Write a new style in sections</button><button type="button" class="btn" id="seOwnSave">Save this as my own style</button><label class="btn" id="seOwnPicBtn" style="text-align:center;cursor:pointer" hidden>Add an example picture<input type="file" id="seOwnPic" accept="image/*" hidden></label></div>
+  </details>
+  <p class="hint" id="seStyleNote" style="margin:0"></p>
+  <div class="field se-box"><span class="lbl">Reading direction <output>the whole series</output></span>
+    <div class="segs" id="seReading" role="group" aria-label="Reading direction"></div><small class="hint" id="seReadingNote" style="margin:0"></small></div>
+  <label class="check-inline se-box" style="display:flex"><input type="checkbox" id="seStrict"> <span>Only draw a character who has an approved sheet <small style="display:block;color:var(--muted)">A panel with anyone else in it is refused until their sheet is added and approved. Books start with this on.</small></span></label>
+  <label class="check-inline se-box" style="display:flex"><input type="checkbox" id="seNoNames"> <span>Leave names out of picture prompts <small style="display:block;color:var(--muted)">For fan fiction and well-known books: picture services refuse prompts that name famous characters, places and things. With this on, each name below is swapped for its stand-in just before a picture is asked for. Only the picture prompt changes: the storyboard and the lettering keep the book's own words. The attached sheets still keep everyone looking the same.</small></span></label>
+  <div class="field se-box" id="seStandInsBox" hidden><label for="seStandIns">Stand-ins <output>one per line: Name = what the picture service is told instead</output></label><textarea id="seStandIns" rows="8" placeholder="Sherlock = the tall, thin detective in a deerstalker&#10;Baker Street = the foggy Victorian street"></textarea></div>
+  <div class="chap-top" id="seCastH"><div><h2>Characters</h2><p id="seCastInfo"></p></div><button class="btn primary" id="seAll" type="button" hidden></button></div>
+  <div class="cast-grid" id="seCast"></div>
+  <form class="se-box" id="seAddForm"><div class="field"><label for="seNewName">Add a character</label><input type="text" id="seNewName" maxlength="40" placeholder="Name"></div><button class="btn" type="submit" style="width:fit-content">Add</button></form>
+  <div class="chap-top" id="sePlacesH"><div><h2>Places</h2><p>A place with a picture stays the same room from panel to panel. Its look and picture are sent whenever a panel's description names it.</p></div></div>
+  <div class="cast-grid" id="sePlaces"></div>
+  <form class="se-box" id="sePlaceForm"><div class="field"><label for="seNewPlace">Add a place</label><input type="text" id="seNewPlace" maxlength="60" placeholder="Name, as the storyboard will call it"></div><button class="btn" type="submit" style="width:fit-content">Add</button></form>
+  <div class="chap-top" id="sePropsH"><div><h2>Props</h2><p>Objects that must look the same every time: a sword, a wand, a car. Sent whenever a panel's description names them.</p></div></div>
+  <div class="cast-grid" id="seProps"></div>
+  <form class="se-box" id="sePropForm"><div class="field"><label for="seNewProp">Add a prop</label><input type="text" id="seNewProp" maxlength="60" placeholder="Name, as the storyboard will call it"></div><button class="btn" type="submit" style="width:fit-content">Add</button></form>
+</section>
+
+<section id="checkView" hidden>
+  <div class="chap-top" id="checkHead"></div>
+  <div id="checkBody"></div>
+</section>
+
+<section id="chapterView" hidden>
+  <div class="chap-top">
+    <div id="chapterHead"></div>
+    <div class="row"><button class="btn primary" id="letterAllBtn" type="button">Letterer: letter every page</button>
+    <button class="btn" id="drawAllBtn" type="button" hidden></button>
+    <button class="btn" id="exportAllBtn" type="button" hidden>Export the chapter</button>
+    <button class="btn" id="coverBtn" type="button" hidden>Add a cover</button>
+    <button class="btn" id="reboardBtn" type="button" hidden>Storyboard again</button></div>
+  </div>
+  <div class="chap-grid" id="chapterGrid"></div>
+  <div id="exportsBox" hidden></div>
+</section>
+
+<p class="focus-chip" id="focusChip" hidden>Focus · <kbd>F</kbd> or <kbd>Esc</kbd> to bring the panels back</p>
+<main class="work" id="workView">
+  <div class="stage">
+    <div class="resizer" id="panelGrip" role="separator" aria-orientation="vertical" aria-label="Tools width. Drag, or use the arrow keys; double-click or Enter folds it away." tabindex="0"></div>
+    <svg id="page" viewBox="0 0 1000 1500" role="img" aria-label="Manga page with lettering. Tap a balloon to select it, drag to move, drag the blue dot to aim its tail.">
+      <image id="art" x="0" y="0" width="1000" height="1500" preserveAspectRatio="none"/>
+      <g id="dyn"></g>
+    </svg>
+  </div>
+
+  <aside class="panel">
+    <button type="button" class="sheet-grip" aria-expanded="true" aria-label="Hide the tools" title="Hide or show the tools"></button>
+    <p class="page-note" id="pageNote" hidden></p>
+    <div id="planBox" hidden>
+      <h2>Letterer’s plan</h2>
+      <ol id="planList"></ol>
+      <button class="btn primary" id="autoBtn" type="button">Letterer: place balloons</button>
+    </div>
+    <p class="empty" id="emptyInspector">Tap a balloon to edit it. Drag to move it; drag the blue dot to aim its tail. Red zones are faces to keep clear.</p>
+    <div id="inspector" hidden>
+      <div class="field">
+        <span class="lbl">Balloon type</span>
+        <div class="kinds" id="kindGrid"></div>
+      </div>
+      <p class="hint" id="kindHint"></p>
+      <div class="field">
+        <label for="textIn">Text <output>**word** = bold</output></label>
+        <textarea id="textIn" rows="3"></textarea>
+      </div>
+      <div class="field">
+        <label for="speakerIn">Speaker</label>
+        <input type="text" id="speakerIn" list="speakerList" autocomplete="off">
+        <datalist id="speakerList"></datalist>
+      </div>
+      <div class="field">
+        <label for="fontSel">Font</label>
+        <select id="fontSel"></select>
+      </div>
+      <div class="field">
+        <label for="sizeIn">Size <output id="sizeOut"></output></label>
+        <input type="range" id="sizeIn" min="0.6" max="1.8" step="0.02">
+      </div>
+      <div class="field">
+        <label for="widthIn">Balloon width <output id="widthOut"></output></label>
+        <input type="range" id="widthIn" min="0.06" max="0.7" step="0.01">
+      </div>
+      <div class="field" id="rotWrap" hidden>
+        <label for="rotIn">Tilt <output id="rotOut"></output></label>
+        <input type="range" id="rotIn" min="-30" max="30" step="1">
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" id="tailChk"> Tail</label>
+        <label><input type="checkbox" id="joinChk"> Joined to the next balloon (pause)</label>
+        <label><input type="checkbox" id="bleedChk"> Crosses panel edge</label>
+        <div id="anchorWrap" hidden>
+          <label><input type="checkbox" id="anchorChk"> Moves with its panel</label>
+          <p class="hint" id="anchorInfo"></p>
+        </div>
+      </div>
+      <button class="btn link" id="voiceBtn" type="button" hidden></button>
+      <div class="row">
+        <button class="btn" id="dupBtn" type="button">Duplicate</button>
+        <button class="btn danger" id="delBtn" type="button">Delete</button>
+      </div>
+    </div>
+
+    <div id="layoutPanel" hidden>
+      <p class="empty" id="layoutNA">This page was drawn as one picture, so its panels can't move. Open “Page 2 (panels)” to try the layout editor: there each panel is its own piece of art.</p>
+      <div id="layoutTools">
+        <p class="empty" id="layoutHint">Drag a round handle to move a gutter; drag its diamond end to slant it. Tap a panel to change its art, border or crop. Balloons move with their panel.</p>
+        <div id="panelTools">
+          <div class="field">
+            <span class="lbl">Panel border</span>
+            <div class="segs" id="ptypes"></div>
+          </div>
+          <div class="field" id="pjobField">
+            <label for="pjob">What this panel is for <output>its job on the page</output></label>
+            <select id="pjob"></select>
+            <p class="hint" id="pjobHint"></p>
+            <span class="lbl">Weight <output>how much of the page it owns</output></span>
+            <div class="segs" id="pweight" role="group" aria-label="Weight, 1 light to 5 the big moment"></div>
+            <label class="check-inline"><input type="checkbox" id="pface"> The page’s one big expression (a shout, tears, a comedy face)</label>
+            <label class="check-inline"><input type="checkbox" id="preveal"> A reveal: belongs first on its page, seen right after the turn</label>
+          </div>
+          <div class="field" id="pbgField">
+            <span class="lbl">Background strength</span>
+            <div class="segs" id="pbg"></div>
+            <p class="hint">Full for the panel that matters, white for the in-between ones. The next drawing of this panel follows it.</p>
+            <label class="check-inline"><input type="checkbox" id="psplash"> Splash panel: the big moment, drawn as one bold image</label>
+          </div>
+          <div class="field">
+            <label for="zoomIn">Zoom <output id="zoomOut"></output></label>
+            <input type="range" id="zoomIn" min="1" max="3" step="0.02">
+            <p class="hint">Drag inside the panel to move the picture.</p>
+          </div>
+          <div class="row" id="splitRow">
+            <button class="btn" id="splitBtn" type="button">Split side by side</button>
+            <button class="btn" id="rowBtn" type="button">Split top and bottom</button>
+          </div>
+          <button class="btn danger" id="pdelBtn" type="button">Delete panel</button>
+        </div>
+        <div class="field">
+          <span class="lbl">Art <output>tap a panel, then a picture</output></span>
+          <div class="tray" id="tray"></div>
+        </div>
+        <button class="btn" id="insetBtn" type="button">+ Inset panel</button>
+        <details class="tmpl-box" id="tmplDetails">
+          <summary class="btn">Page layouts</summary>
+          <div class="field">
+            <span class="lbl">Panels</span>
+            <div class="segs wrap" id="tmplFilters"></div>
+          </div>
+          <button class="btn" id="tmplPick" type="button" hidden>Pick the layout by weight</button>
+          <p class="hint" id="tmplHint" hidden></p>
+          <div class="tmpls" id="tmplGrid"></div>
+        </details>
+      </div>
+    </div>
+
+    <div id="artPanel" hidden>
+      <p class="empty" id="artHint">Tap a panel, on the page or in the sidebar, to draw it.</p>
+      <div id="pageGen" hidden>
+        <h2 id="pgTitle"></h2>
+        <p class="hint" id="pgInfo"></p>
+        <div class="row">
+          <button class="btn primary" id="pgMissing" type="button"></button>
+          <button class="btn" id="pgAll" type="button"></button>
+        </div>
+        <p class="hint">Each panel uses the Artist’s prompt, or yours if you changed it. To read or change one first, tap that panel.</p>
+      </div>
+      <div id="artTools">
+        <div>
+          <h2 id="artTitle"></h2>
+          <p class="hint" id="artBoard"></p>
+          <details class="from-book" id="artInart"><summary>Lettering drawn into the picture</summary>
+            <div class="field"><label for="artSfx">Sound effect <output>drawn by the Artist, e.g. SLAM</output></label><input type="text" id="artSfx" maxlength="40"></div>
+            <div class="field"><label for="artWriting">Writing shown in the picture <output>a sign, a note, a phone screen: exact words</output></label><input type="text" id="artWriting" maxlength="160"></div>
+            <p class="hint" style="margin:0">Balloons and captions are added by the Letterer, not here. Changing these writes the Artist's prompt again.</p></details>
+          <details class="from-book" id="artFrom" hidden><summary></summary><div class="bk-text" id="artFromText"></div></details>
+        </div>
+        <img id="artNow" alt="This panel's current art" hidden>
+        <div id="artReview" class="art-review" hidden></div>
+        <div class="field" id="artFacesWrap" hidden>
+          <span class="lbl">Characters in this picture</span>
+          <div class="people" id="artFaces"></div>
+          <div class="row"><button type="button" class="btn" id="lookBtn" hidden>Look again for the missing faces</button></div>
+          <p class="hint" id="lookNote" style="margin:0" hidden></p>
+          <p class="queued-note" id="markNote" hidden></p>
+          <div class="row" id="markOtherWrap" hidden><select id="markOther" aria-label="Mark someone else's face in this picture"></select></div>
+          <p class="hint" style="margin:0">Each face is boxed on the page. A balloon's tail aims at its speaker's box, so every speaker needs one in the right place. A saved character is sent as a reference whenever the Artist draws them, so they keep this look.</p>
+        </div>
+        <p class="queued-note" id="artQueued" hidden></p>
+        <div class="field">
+          <label for="genModel">Generate with</label>
+          <button type="button" class="btn mp-btn" id="genModel" title="Pick the model that draws the pictures"></button>
+          <div class="segs qsegs" id="genQuality" role="group" aria-label="Picture quality" hidden></div>
+          <p class="hint" id="genSrcHint"></p>
+        </div>
+        <div class="field">
+          <span class="lbl">Prompt</span>
+          <div class="segs" id="genModes">
+            <button type="button" class="seg" data-gm="artist">Artist’s prompt</button>
+            <button type="button" class="seg" data-gm="custom">My own prompt</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="genPrompt"><span id="genLabel"></span><span class="tag" id="genTag"></span></label>
+          <textarea id="genPrompt" rows="12" spellcheck="true"></textarea>
+          <button class="btn link" id="genReset" type="button">Back to the Artist’s prompt</button>
+        </div>
+        <label class="check-inline" id="genKeepWrap"><input type="checkbox" id="genKeep"> Add the series style and character sheets</label>
+        <div class="field" id="tagsField">
+          <span class="lbl">Tagged <output>from this project's asset bible</output></span>
+          <div class="tagchips" id="tagChips"></div>
+          <p class="hint" id="tagHint"></p>
+        </div>
+        <div class="field" id="refsField">
+          <span class="lbl">Pictures sent <output>tagged sheets first, then any one-off picture</output></span>
+          <ul id="refList"></ul>
+          <p class="hint" id="genRefs"></p>
+          <details id="refAdd">
+            <summary class="btn">+ One-off picture</summary>
+            <div class="refmenu">
+              <div class="segs" id="refTabs">
+                
+                <button type="button" class="seg" data-rt="panel">From a panel</button>
+                <button type="button" class="seg" data-rt="upload">Upload</button>
+              </div>
+              <div id="refPane"></div>
+            </div>
+          </details>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="genBtn" type="button">Generate</button>
+          <button class="btn primary" id="genRetry" type="button" hidden>Try again</button>
+          <button class="btn danger" id="genCancel" type="button" hidden>Cancel request</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="checks-head"><h2>Checks</h2><span id="checkSummary"></span></div>
+      <ul id="checks"></ul>
+    </div>
+    <button class="btn link" id="resetBtn" type="button">Reset this page</button>
+  </aside>
+</main>
+</div>
+</div>
+
+<footer class="statusbar"><span class="status" id="status" role="status" aria-live="polite">Loading…</span><span class="spacer"></span><span id="sbQueue"></span><span class="mono" id="sbProj"></span></footer>
+
+<dialog id="settingsDlg" aria-labelledby="settingsT">
+  <div class="dlg-head"><h2 id="settingsT">Settings</h2><button type="button" class="btn" id="settingsX">Close</button></div>
+  <p class="hint">Your own choices, kept in this browser on this device.</p>
+  <label class="setrow"><input type="checkbox" id="setAuto"><span><b>Check pictures by themselves after they are drawn</b><br><span class="hint">The asset check compares every drawn panel with the others and with the approved sheets. It takes a few minutes and only warns.</span></span></label>
+  <p class="hint">Light or dark: the sun and moon button, top right.</p>
+  <p class="setrow"><a class="btn" href="/connections">Connections</a><span class="hint">Sign in to Codex and link your keys (OpenRouter, Google, ElevenLabs, fal and more). Also the plug button, top right.</span></p>
+</dialog>
+<dialog id="autoDlg" aria-labelledby="autoT">
+  <div class="dlg-head"><h2 id="autoT">Check new pictures by themselves?</h2></div>
+  <p>The asset check looks at every drawn panel for the same face, hair, outfit, hands, props and places from picture to picture, and against the approved sheets. It takes a few minutes, and only warns: nothing is held back.</p>
+  <p class="hint">You can change this later in Settings (the cog, top right).</p>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" class="btn" id="autoNo">No, I will run it myself</button><button type="button" class="btn primary" id="autoYes">Yes, check them</button></div>
+</dialog>
+<dialog id="styleDlg" aria-labelledby="styleDlgT">
+  <div class="dlg-head"><h2 id="styleDlgT">Choose an art style</h2><button type="button" class="btn" id="styleDlgX">Close</button></div>
+  <p class="hint">Every example shows the same scene, so you can compare. Tap one to choose it.</p>
+  <div class="style-grid" id="styleDlgGrid"></div>
+</dialog>
+
+<dialog id="sbDlg" aria-labelledby="sbDlgT">
+  <div class="dlg-head"><h2 id="sbDlgT">Storyboard this chapter again</h2><button type="button" class="btn" id="sbDlgX">Close</button></div>
+  <div style="display:grid;gap:12px">
+    <p class="hint" style="margin:0">The Paneler reads the script again and lays out new pages. Every line is kept word for word. It takes a few minutes.</p>
+    <label class="field"><span class="lbl">Note to the Paneler (optional)</span>
+      <textarea id="sbNote" maxlength="600" placeholder="For example: more pages, give the opening a full page, end page 1 on the empty boat."></textarea></label>
+    <div class="note-chips" id="sbChips">
+      <button type="button" class="btn" data-chip="More pages: spread the scene out.">More pages</button>
+      <button type="button" class="btn" data-chip="Slower opening: give the first moment a page to itself.">Slower opening</button>
+      <button type="button" class="btn" data-chip="Fewer panels a page: 3 or 4, with one big one.">Fewer panels a page</button>
+      <button type="button" class="btn" data-chip="Give the biggest moment a full-page panel.">A full-page moment</button>
+    </div>
+    <p class="warnbox" id="sbWarn"></p>
+    <div class="row"><button type="button" class="btn primary" id="sbGo">Storyboard again</button><button type="button" class="btn" id="sbCancel">Cancel</button></div>
+  </div>
+</dialog>
+
+<script src="render.js?v=20261119s"></script>
+<script src="core/director.js?v=20261119a"></script>
+<script src="core/paneler.js?v=20261119a"></script>
+<script src="core/artist.js?v=20261119e"></script>
+<script src="price.js?v=20261118b"></script>
+<script src="editor.js?v=20261119s"></script>

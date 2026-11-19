@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/ibasho-mark.svg" type="image/svg+xml">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Create · Ibasho</title>
+<style>
+  body { margin: 0; }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 40px; display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); } }
+  h2 { font-size: 1.2rem; margin: 2px 0 10px; }
+  h3 { font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 700; }
+  .card { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 12px 14px; min-width: 0; }
+  .kinds { display: flex; gap: 2px; margin-bottom: 12px; }
+  .kinds .seg { flex: 1; min-height: 40px; }
+  .field { display: flex; flex-direction: column; gap: 5px; margin: 0 0 12px; }
+  .field > span { font-size: .84rem; color: var(--muted); font-weight: 600; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 120px; padding: 8px 10px; font: inherit; line-height: 1.4; }
+  select { min-height: 40px; padding: 6px 8px; font: inherit; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > .field { flex: 1 1 130px; margin: 0; }
+  .picks { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pick { position: relative; width: 64px; height: 64px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line-2); background: var(--bg); }
+  .pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pick button { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: rgb(0 0 0 / .7); color: #fff; font-size: .8rem; line-height: 1; cursor: pointer; }
+  .add { width: 64px; height: 64px; display: inline-flex; align-items: center; justify-content: center; font-size: 1.4rem; padding: 0; }
+  .note { color: var(--muted); font-size: .84rem; margin: 2px 0 0; }
+  .price { font-weight: 650; margin: 4px 0 10px; }
+  .go { width: 100%; min-height: 46px; font-size: 1rem; }
+  .soon { color: var(--muted); font-size: .9rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  @media (max-width: 520px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .item { position: relative; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: var(--bg); cursor: pointer; padding: 0; color: inherit; text-align: left; font: inherit; }
+  .item img, .item .ph { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+  .item .ph { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .84rem; padding: 8px; box-sizing: border-box; text-align: center; }
+  .item .cap { display: block; padding: 5px 7px; font-size: .74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .badge { position: absolute; top: 5px; left: 5px; font-size: .7rem; font-weight: 700; padding: 1px 6px; border-radius: 3px; background: rgb(0 0 0 / .72); color: #fff; }
+  .item.bad .ph { color: var(--red); }
+  dialog.view { width: min(900px, calc(100vw - 16px)); max-height: 92vh; padding: 0 !important; }
+  dialog.view::backdrop { background: rgb(0 0 0 / .6); }
+  .vbody { padding: 12px 14px 16px; overflow-y: auto; max-height: calc(92vh - 10px); box-sizing: border-box; }
+  .vbody img, .vbody video { width: 100%; max-height: 60vh; object-fit: contain; background: #000; border-radius: 4px; display: block; }
+  .vbody .meta { color: var(--muted); font-size: .84rem; margin: 8px 0; overflow-wrap: anywhere; }
+  .vbody .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .send { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; }
+  .send select { width: 100%; margin: 4px 0 8px; }
+  dialog.lib { width: min(720px, calc(100vw - 16px)); padding: 0 !important; }
+  dialog.lib::backdrop { background: rgb(0 0 0 / .55); }
+  /* C Pro (18 Nov): your work is the show; the maker floats at the bottom */
+  .wrap.cpro { display: block; max-width: 1400px; padding: 22px 20px 340px; }
+  .gallery .row { align-items: baseline; }
+  .g-h { margin: 0; font-size: 1.8rem; font-weight: 800; letter-spacing: -.02em; }
+  #hist { display: block; columns: 4 240px; column-gap: 14px; }
+  #hist .item { display: block; width: 100%; break-inside: avoid; margin: 0 0 14px; border-radius: 14px; border-color: var(--line); background: var(--surface); }
+  #hist .item img { aspect-ratio: auto; height: auto; }
+  #hist .item .ph { aspect-ratio: 4 / 3; }
+  #hist .item .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 12px 9px; color: #f6f0ec; background: linear-gradient(transparent, rgb(0 0 0 / .78)); opacity: 0; transition: opacity .15s; }
+  #hist .item:hover .cap, #hist .item:focus-visible .cap { opacity: 1; }
+  #hist .item .badge { top: 8px; left: 8px; border-radius: 999px; padding: 2px 8px; }
+  #hist:empty::before, #hist > p { color: var(--muted); }
+  .composer { position: fixed; z-index: 15; left: 50%; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(900px, calc(100% - 24px)); max-height: min(62vh, 560px); overflow-y: auto; box-sizing: border-box; padding: 12px 14px; border-radius: 18px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border: 1px solid var(--line-2); box-shadow: 0 24px 60px rgb(0 0 0 / .45); }
+  .composer #makeH { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .composer .kinds { display: inline-flex; margin: 0 0 10px; }
+  .composer .kinds .seg { flex: none; min-height: 34px; padding: 4px 12px; }
+  .composer #form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 10px; align-items: end; }
+  .composer #form > .field:first-child { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; order: 2; }
+  .composer #form > .field:first-child > span { display: none; }
+  .composer #form > .field:first-child .qsegs { margin: 0; }
+  .composer #form > .field:first-child .qsegs .seg { min-height: 34px; flex-direction: row; gap: 6px; padding: 4px 10px; }
+  .composer .mp-btn { min-height: 34px; }
+  .composer #form > .field:nth-child(2) { grid-column: 1 / -1; margin: 0; order: 1; }
+  .composer #form > .field:nth-child(2) > span { display: none; }
+  .composer textarea { min-height: 56px; border: 0; background: transparent; font-size: 1.05rem; padding: 4px 2px; resize: vertical; }
+  .composer textarea:focus { outline: none; }
+  .composer #picOpts, .composer #vidOpts { grid-column: 1 / -1; order: 3; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
+  .composer #picOpts[hidden], .composer #vidOpts[hidden] { display: none; }
+  .composer #picOpts .field, .composer #vidOpts .field { margin: 0; }
+  .composer #vidOpts .row { display: contents; }
+  .composer #vidOpts .field { flex: 0 1 auto; }
+  .composer #vidOpts .check-inline { flex-basis: 100%; }
+  .composer .pick, .composer .add { width: 44px; height: 44px; border-radius: 8px; }
+  .composer .price { order: 4; margin: 0; align-self: center; font-family: var(--mono); color: var(--amber); }
+  .composer .go { order: 5; width: auto; min-height: 42px; padding: 0 24px; }
+  .composer #makeNote { order: 6; grid-column: 1 / -1; margin: 0; }
+  @media (max-width: 760px) { .composer { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); max-height: 50vh; } .wrap.cpro { padding-bottom: 420px; } }
+</style>
+<link rel="stylesheet" href="/studio.css?v=13">
+<script src="/price.js?v=20261118b"></script>
+<script src="/studio.js?v=10"></script>
+</head>
+<body>
+<header class="appbar">
+  <a class="brand" href="/#home"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><filter id="ibs-wear"><feTurbulence baseFrequency="1.6" numOctaves="2" seed="3"/><feDisplacementMap in="SourceGraphic" scale="0.55"/></filter><mask id="ibs-cut"><rect width="24" height="24" fill="#fff"/><path d="M2 10.2h11.2V2M12.8 22v-8.2H22" fill="none" stroke="#000" stroke-width="1.6"/></mask></defs><g filter="url(#ibs-wear)"><rect x="2" y="2" width="20" height="20" rx="2.4" fill="currentColor" mask="url(#ibs-cut)"/></g></svg>Ibasho</a>
+  <nav class="ws" aria-label="Workspace">
+    <a class="wsb" href="/#home">Home</a>
+    <a class="wsb" href="/">Manga</a>
+    <a class="wsb" href="/anime/#/">Anime</a>
+    <a class="wsb" href="/create" aria-current="page">Create</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="iconbtn" href="/connections" title="Connections and spending" aria-label="Connections and spending"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></a>
+  <button class="iconbtn" id="settingsBtn" type="button" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.8"/></svg></button>
+  <button class="iconbtn" id="themeBtn" type="button"></button>
+</header>
+
+<main class="wrap cpro">
+  <section class="gallery" aria-labelledby="histH">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 id="histH" class="g-h">Everything you made</h2><span class="note" id="histNote"></span></div>
+    <div class="grid" id="hist"></div>
+  </section>
+  <section class="card composer" aria-labelledby="makeH">
+    <h2 id="makeH">Make something</h2>
+    <div class="segs kinds" role="tablist" aria-label="What to make">
+      <button class="seg" data-kind="picture" role="tab">Picture</button>
+      <button class="seg" data-kind="video" role="tab">Video</button>
+      <button class="seg" data-kind="voice" role="tab">Voice</button>
+      <button class="seg" data-kind="sound" role="tab">Sound</button>
+      <button class="seg" data-kind="music" role="tab">Music</button>
+    </div>
+
+    <div id="soonBox" hidden><p class="soon" id="soonText"></p><a class="btn" href="/connections">Open Connections</a></div>
+
+    <div id="form">
+      <div class="field"><span>Model</span><button type="button" class="btn mp-btn" id="modelBtn"></button>
+        <div class="segs qsegs" id="quality" role="group" aria-label="Picture quality" hidden></div></div>
+      <div class="field"><span id="promptLbl">What to make</span><textarea id="prompt" placeholder="Describe it: who, where, what happens, the look, the camera."></textarea></div>
+
+      <div id="picOpts">
+        <div class="field"><span>Shape</span><select id="aspect"><option value="1:1">Square</option><option value="2:3">Tall (2:3)</option><option value="3:2">Wide (3:2)</option><option value="16:9">Widescreen (16:9)</option><option value="9:16">Phone (9:16)</option></select></div>
+        <div class="field" id="refsField"><span id="refsLbl">Reference pictures</span><div class="picks" id="refs"></div><p class="note" id="refsNote"></p></div>
+      </div>
+
+      <div id="vidOpts" hidden>
+        <div class="row">
+          <div class="field"><span>Starts from (optional)</span><div class="picks" id="first"></div></div>
+          <div class="field" id="lastField"><span>Ends on (optional)</span><div class="picks" id="last"></div></div>
+        </div>
+        <div class="row" style="margin:12px 0">
+          <div class="field"><span>Length</span><select id="seconds"></select></div>
+          <div class="field"><span>Size</span><select id="resolution"></select></div>
+          <div class="field"><span>Shape</span><select id="vaspect"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></div>
+        </div>
+        <label class="check-inline" id="soundWrap"><input type="checkbox" id="sound"> With sound (voices, music, effects made by the model)</label>
+      </div>
+
+      <p class="price" id="price"></p>
+      <button class="btn primary go" id="make">Make</button>
+      <p class="note" id="makeNote"></p>
+    </div>
+    <input type="file" id="upload" accept="image/png,image/jpeg,image/webp" hidden>
+  </section>
+
+</main>
+
+<dialog class="view" id="view" aria-label="A result"><div class="vbody" id="vbody"></div></dialog>
+<dialog class="view lib" id="lib" aria-label="Pick a picture"><div class="vbody"><div class="row" style="justify-content:space-between"><h3 style="margin:0" id="libTitle">Pick a picture</h3><button class="btn ghost" id="libX" aria-label="Close">✕</button></div>
+  <div class="row" style="margin:10px 0"><button class="btn" id="libUp">Upload a picture</button></div><div class="grid" id="libGrid"></div></div></dialog>
+
+<footer class="statusbar"><span class="status" id="status" role="status" aria-live="polite"></span></footer>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const say = (t) => { $("status").textContent = t || ""; };
+  const KEY = "ibasho-create";
+  const keep = (() => { try { return JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { return {}; } })();
+  const S = { kind: keep.kind || "picture", items: [], refs: [], first: null, last: null, model: { picture: null, video: null } };
+  const fileUrl = (id, poster) => `/api/create/file?id=${encodeURIComponent(id)}${poster ? "&poster=1" : ""}`;
+  const thumbOf = (m) => (m.kind === "video" ? (m.poster ? fileUrl(m.id, true) : "") : m.file ? fileUrl(m.id) : "");
+  const pics = () => S.items.filter((m) => m.status === "done" && m.kind !== "video" && m.file);
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ kind: S.kind, prompt: $("prompt").value })); } catch (e) { /* no storage */ } };
+  const SOON = { voice: "Voices need Google AI Studio (Gemini voices, free tier) or ElevenLabs. Connect one and this tab will make speech from text.", sound: "Sound effects need ElevenLabs. Connect it and this tab will make an effect from a description.", music: "Music needs Google AI Studio (Lyria) or ElevenLabs. Connect one and this tab will make a piece from a description." };
+
+  // ---------- model and price ----------
+  async function loadModel(kind) { try { S.model[kind] = await window.Ibasho.modelChoice(kind); } catch (e) { S.model[kind] = null; } }
+  const M = () => S.model[S.kind];
+  function picEst(q) { const m = M(); if (!m || m.service !== "openrouter" || !m.pm) return null; const sz = { "1:1": [1024, 1024], "2:3": [1024, 1536], "3:2": [1536, 1024], "16:9": [1536, 864], "9:16": [864, 1536] }[$("aspect").value];
+    return window.IbashoPrice.picture(m.pm, { quality: q || m.quality, size: sz, refs: S.refs.length, chars: $("prompt").value.length }).usd; }
+  function vidEst() { const m = M(); if (!m || !m.perSecondAll) return null; const p = m.perSecondAll[$("resolution").value]; return p != null ? p * (+$("seconds").value || 0) : null; }
+  function drawForm() {
+    for (const b of document.querySelectorAll("[data-kind]")) b.setAttribute("aria-pressed", b.dataset.kind === S.kind);
+    const soon = !!SOON[S.kind]; $("soonBox").hidden = !soon; $("form").hidden = soon; if (soon) { $("soonText").textContent = SOON[S.kind]; return; }
+    const m = M(), pic = S.kind === "picture";
+    $("modelBtn").innerHTML = window.Ibasho.modelLabel(m);
+    $("picOpts").hidden = !pic; $("vidOpts").hidden = pic;
+    $("promptLbl").textContent = pic ? "What to draw" : "What happens in the video";
+    const qs = pic && m && m.service === "openrouter" ? (m.qualities || []).filter((x) => ["low", "medium", "high"].includes(x)) : [];
+    $("quality").hidden = !qs.length; $("quality").innerHTML = qs.map((x) => `<button type="button" class="seg" data-q="${x}" aria-pressed="${m.quality === x}">${window.Ibasho.QUALITY[x]}<small>${window.IbashoPrice.money(picEst(x))}</small></button>`).join("");
+    let usd = null, why = "";
+    if (pic) {
+      const max = m && m.service === "openrouter" ? Math.min(16, +m.refs || 0) : m && m.service === "codex" ? 4 : 0;
+      $("refsField").hidden = !max; $("refsLbl").textContent = `Reference pictures (up to ${max})`;
+      $("refs").innerHTML = S.refs.map((id, i) => `<div class="pick"><img src="${esc(fileUrl(id))}" alt="Reference ${i + 1}"><button data-unref="${i}" aria-label="Remove reference ${i + 1}">✕</button></div>`).join("") + (S.refs.length < max ? `<button class="btn add" id="addRef" aria-label="Add a reference picture">+</button>` : "");
+      $("refsNote").textContent = S.refs.length > max ? `This model takes ${max}; only the first ${max} are sent.` : "From what you made here, or an upload.";
+      usd = picEst();
+    } else {
+      const lens = (m && m.lengths) || [], res = (m && m.resolutions) || [], pick = (el, vals, fmt, want) => { const cur = el.value || want; el.innerHTML = vals.map((v) => `<option value="${esc(v)}">${esc(fmt(v))}</option>`).join(""); if (vals.map(String).includes(String(cur))) el.value = cur; };
+      pick($("seconds"), lens, (v) => v + " s", lens.includes(5) ? 5 : lens[0]);
+      pick($("resolution"), res, (v) => v + (m.perSecondAll && m.perSecondAll[v] != null ? ` · $${m.perSecondAll[v].toFixed(3)}/s` : ""), res.includes("720p") ? "720p" : res[0]);
+      $("lastField").hidden = !(m && m.last); if (!(m && m.last)) S.last = null;
+      $("soundWrap").hidden = !(m && m.sound);
+      const box = (slot) => S[slot] ? `<div class="pick"><img src="${esc(fileUrl(S[slot]))}" alt=""><button data-unframe="${slot}" aria-label="Remove">✕</button></div>` : `<button class="btn add" data-frame="${slot}" aria-label="Pick a picture">+</button>`;
+      $("first").innerHTML = box("first"); $("last").innerHTML = box("last");
+      if (!m || m.service !== "openrouter") why = "Pick a video model with the model button (it needs OpenRouter).";
+      usd = vidEst();
+    }
+    $("price").textContent = why ? "" : pic && m && m.service === "codex" ? "Included in your ChatGPT plan · about 2 to 4 minutes." : usd != null ? `About ${window.IbashoPrice.money(usd)}` + (pic ? "" : ` for ${$("seconds").value} s`) + ", paid from your OpenRouter credit." : "";
+    $("make").disabled = !!why || !$("prompt").value.trim(); $("makeNote").textContent = why;
+    $("make").textContent = pic ? "Make the picture" : "Make the video";
+  }
+
+  // ---------- history ----------
+  async function loadList() { try { S.items = await (await fetch("/api/create/list")).json(); } catch (e) { return; } drawList(); const busy = S.items.some((m) => m.status === "waiting" || m.status === "working"); clearTimeout(S.t); if (busy) S.t = setTimeout(loadList, 4000); }
+  function drawList() {
+    const made = S.items.filter((m) => m.kind !== "upload" || true);
+    $("histNote").textContent = made.length ? `${made.length} item${made.length === 1 ? "" : "s"}` : "";
+    $("hist").innerHTML = made.length ? made.map((m) => { const t = thumbOf(m), busy = m.status === "waiting" || m.status === "working", bad = m.status === "failed";
+      return `<button class="item${bad ? " bad" : ""}" data-open="${esc(m.id)}">${t && !busy && !bad ? `<img src="${esc(t)}" alt="" loading="lazy">` : `<span class="ph">${busy ? esc(m.msg || (m.status === "waiting" ? "Waiting its turn…" : "Making…")) : bad ? "Not made: " + esc(m.msg) : "…"}</span>`}
+        <span class="badge">${m.kind === "video" ? "▶ Video" : m.kind === "upload" ? "Upload" : "Picture"}</span><span class="cap">${esc(m.prompt)}</span></button>`; }).join("")
+      : `<p class="note">Nothing yet. What you make or upload here stays here, ready to use again or to send to a panel or a shot.</p>`;
+  }
+  async function openItem(id) {
+    const m = S.items.find((x) => x.id === id); if (!m) return; const done = m.status === "done" && m.file;
+    const media = !done ? `<p class="note">${esc(m.status === "failed" ? "Not made: " + m.msg : m.msg || "Still being made.")}</p>` : m.kind === "video" ? `<video src="${esc(fileUrl(m.id))}" controls playsinline ${m.poster ? `poster="${esc(fileUrl(m.id, true))}"` : ""}></video>` : `<img src="${esc(fileUrl(m.id))}" alt="">`;
+    $("vbody").innerHTML = `<div class="row" style="justify-content:space-between"><h3 style="margin:0">${m.kind === "video" ? "Video" : m.kind === "upload" ? "Uploaded picture" : "Picture"}</h3><button class="btn ghost" data-v="close" aria-label="Close">✕</button></div>${media}
+      <p class="meta">${esc(m.prompt)}<br>${m.model ? esc(m.model.split("/").pop()) + (m.quality ? " · " + esc(m.quality) : "") + (m.seconds ? ` · ${m.seconds} s` : "") + (m.resolution ? " · " + esc(m.resolution) : "") + " · " : ""}${m.cost != null ? (m.estimated ? "≈" : "") + "$" + (+m.cost).toFixed(3) + " · " : ""}${esc(new Date(m.at).toLocaleString())}</p>
+      <div class="acts">${done ? `<a class="btn" href="${esc(fileUrl(m.id))}&download=1">Download</a>` : ""}
+        ${done && m.kind !== "video" ? `<button class="btn" data-v="ref">Use as a reference</button><button class="btn" data-v="first">Start a video from it</button>` : ""}
+        ${m.kind !== "upload" ? `<button class="btn" data-v="again">Same words again</button>` : ""}
+        <button class="btn danger" data-v="del">Delete</button></div>
+      ${done ? `<div class="send"><h3>Send it to…</h3><div class="row">${m.kind === "video" ? "" : `<button class="btn" data-v="topanel">A manga panel</button>`}<button class="btn" data-v="toshot">An anime shot</button></div><div id="sendBox"></div></div>` : ""}`;
+    $("view").dataset.id = id; $("view").showModal();
+  }
+  async function sendBox(to) {
+    const box = $("sendBox"); box.innerHTML = `<p class="note">Loading…</p>`;
+    let t; try { t = await (await fetch("/api/create/targets")).json(); } catch (e) { box.innerHTML = `<p class="note">Could not load the list.</p>`; return; }
+    if (to === "panel") {
+      box.innerHTML = `<label class="note">Project<select id="sProj"><option value="">Pick a project</option>${t.projects.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("")}</select></label><label class="note">Panel<select id="sPanel" disabled></select></label><button class="btn primary" id="sGo" disabled>Put it in this panel</button><p class="note">It becomes a new take of the panel's picture; the old takes stay.</p>`;
+      $("sProj").onchange = async () => { const id = $("sProj").value; $("sPanel").disabled = $("sGo").disabled = !id; if (!id) return; const ps = await (await fetch("/api/create/targets?project=" + encodeURIComponent(id))).json(); $("sPanel").innerHTML = ps.map((q) => `<option value="${esc(q.id)}">${esc(q.label)}</option>`).join(""); };
+      $("sGo").onclick = () => send({ to: "panel", project: $("sProj").value, panel: $("sPanel").value });
+    } else {
+      box.innerHTML = `<label class="note">Scene<select id="sScene"><option value="">Pick a scene</option>${t.scenes.map((s, i) => `<option value="${i}">${esc(s.title)}</option>`).join("")}</select></label><label class="note">Shot<select id="sShot" disabled></select></label><button class="btn primary" id="sGo" disabled>Put it on this shot</button><p class="note">A picture becomes a new take of the shot's still; a video becomes its clip. Earlier takes stay.</p>`;
+      $("sScene").onchange = () => { const s = t.scenes[+$("sScene").value]; $("sShot").disabled = $("sGo").disabled = !s; $("sShot").innerHTML = s ? s.shots.map((x) => `<option value="${esc(x.id)}">${esc(x.id)} · ${esc(x.label)}</option>`).join("") : ""; };
+      $("sGo").onclick = () => { const s = t.scenes[+$("sScene").value]; send({ to: "shot", scene: s.id, shot: $("sShot").value }); };
+    }
+  }
+  async function send(b) {
+    $("sGo").disabled = true; $("sGo").textContent = "Sending…";
+    try { const r = await fetch("/api/create/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: $("view").dataset.id, ...b }) }); const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not send it."); say(b.to === "panel" ? "Sent: open the project in Manga to see it in the panel." : "Sent: it is on the shot now."); $("view").close(); }
+    catch (e) { say(e.message); $("sGo").disabled = false; $("sGo").textContent = "Try again"; }
+  }
+
+  // ---------- picking a picture (reference or video frame) ----------
+  let libFor = null;
+  function openLib(forWhat) { libFor = forWhat; $("libTitle").textContent = forWhat === "ref" ? "Pick a reference picture" : forWhat === "first" ? "The video starts from…" : "The video ends on…";
+    const ps = pics(); $("libGrid").innerHTML = ps.length ? ps.map((m) => `<button class="item" data-lib="${esc(m.id)}"><img src="${esc(fileUrl(m.id))}" alt="" loading="lazy"><span class="cap">${esc(m.prompt)}</span></button>`).join("") : `<p class="note">Nothing made here yet: upload a picture.</p>`; $("lib").showModal(); }
+  function usePic(id) { if (libFor === "ref") { if (!S.refs.includes(id)) S.refs.push(id); } else S[libFor] = id; drawForm(); }
+
+  // ---------- events ----------
+  document.querySelector(".kinds").addEventListener("click", async (e) => { const b = e.target.closest("[data-kind]"); if (!b) return; S.kind = b.dataset.kind; save(); if (!SOON[S.kind] && !S.model[S.kind]) await loadModel(S.kind); drawForm(); });
+  $("modelBtn").onclick = async () => { const o = await window.Ibasho.pickModel(S.kind); if (o) { S.model[S.kind] = { ...o, connected: true }; drawForm(); } };
+  $("quality").onclick = async (e) => { const b = e.target.closest("[data-q]"); if (!b) return; try { S.model.picture = { ...S.model.picture, ...(await window.Ibasho.setQuality("picture", S.model.picture, b.dataset.q)) }; } catch (err) { say(err.message); } drawForm(); };
+  for (const id of ["prompt", "aspect", "seconds", "resolution", "vaspect"]) $(id).addEventListener(id === "prompt" ? "input" : "change", () => { save(); drawForm(); });
+  $("form").addEventListener("click", (e) => {
+    if (e.target.closest("#addRef")) return openLib("ref");
+    const fr = e.target.closest("[data-frame]"); if (fr) return openLib(fr.dataset.frame);
+    const ur = e.target.closest("[data-unref]"); if (ur) { S.refs.splice(+ur.dataset.unref, 1); return drawForm(); }
+    const uf = e.target.closest("[data-unframe]"); if (uf) { S[uf.dataset.unframe] = null; return drawForm(); }
+  });
+  $("libX").onclick = () => $("lib").close(); $("lib").addEventListener("click", (e) => { if (e.target === $("lib")) return $("lib").close(); const b = e.target.closest("[data-lib]"); if (b) { usePic(b.dataset.lib); $("lib").close(); } });
+  $("libUp").onclick = () => $("upload").click();
+  $("upload").onchange = async () => { const f = $("upload").files[0]; if (!f) return; say("Adding the picture…");
+    try { const r = await fetch("/api/create/upload?name=" + encodeURIComponent(f.name), { method: "POST", body: f }); const m = await r.json(); if (!r.ok) throw new Error(m.error); S.items.unshift(m); usePic(m.id); drawList(); $("lib").close(); say(""); } catch (e) { say(e.message || "Could not add it."); }
+    $("upload").value = ""; };
+  $("make").onclick = async () => {
+    const m = M(), pic = S.kind === "picture", usd = pic ? picEst() : vidEst();
+    if (!pic) { // a video always asks, with its price; then only the monthly cap is checked
+      if (!confirm(`Make a ${$("seconds").value} s video with ${m.name} at ${$("resolution").value}${$("sound").checked && !$("soundWrap").hidden ? ", with sound" : ""}?\n\nAbout ${window.IbashoPrice.money(usd)}, paid from your OpenRouter credit. It takes a few minutes.`)) return;
+      if (!(await window.Ibasho.okToSpend(usd || 0, "This video", { asked: true }))) return; }
+    if (pic && !(await window.Ibasho.okToSpend(usd || 0, "This picture"))) return;
+    const body = { kind: S.kind, prompt: $("prompt").value, service: m.service, model: m.model, quality: m.quality,
+      ...(pic ? { aspect: $("aspect").value, refs: S.refs } : { aspect: $("vaspect").value, seconds: +$("seconds").value, resolution: $("resolution").value, sound: $("sound").checked && !$("soundWrap").hidden, first: S.first, last: S.last }) };
+    $("make").disabled = true;
+    try { const r = await fetch("/api/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!r.ok) throw new Error(j.error); S.items.unshift(j); drawList(); loadList(); say(pic ? "Making the picture: it appears on the right when it is done." : "Making the video: a few minutes. It appears in the list when it is done."); }
+    catch (e) { say(e.message || "Could not start it."); }
+    drawForm();
+  };
+  $("hist").addEventListener("click", (e) => { const b = e.target.closest("[data-open]"); if (b) openItem(b.dataset.open); });
+  $("view").addEventListener("click", async (e) => {
+    if (e.target === $("view")) return $("view").close();
+    const b = e.target.closest("[data-v]"); if (!b) return; const id = $("view").dataset.id, m = S.items.find((x) => x.id === id);
+    if (b.dataset.v === "close") return $("view").close();
+    if (b.dataset.v === "ref") { S.kind = "picture"; if (!S.refs.includes(id)) S.refs.push(id); $("view").close(); if (!S.model.picture) await loadModel("picture"); return drawForm(); }
+    if (b.dataset.v === "first") { S.kind = "video"; S.first = id; $("view").close(); if (!S.model.video) await loadModel("video"); return drawForm(); }
+    if (b.dataset.v === "again") { S.kind = m.kind; $("prompt").value = m.prompt; $("view").close(); if (!S.model[S.kind]) await loadModel(S.kind); save(); return drawForm(); }
+    if (b.dataset.v === "del") { if (!confirm("Delete this from the Create history? It is not removed from any panel or shot it was sent to.")) return; await fetch("/api/create?id=" + encodeURIComponent(id), { method: "DELETE" }); $("view").close(); S.refs = S.refs.filter((x) => x !== id); if (S.first === id) S.first = null; if (S.last === id) S.last = null; return loadList().then(drawForm); }
+    if (b.dataset.v === "topanel") return sendBox("panel");
+    if (b.dataset.v === "toshot") return sendBox("shot");
+  });
+
+  if (window.Ibasho && window.Ibasho.registerAssistant) window.Ibasho.registerAssistant({
+    where: () => ({ screen: "create", making: S.kind, prompt: $("prompt").value, model: M() ? M().name : "", recent: S.items.slice(0, 12).map((m) => ({ id: m.id, kind: m.kind, prompt: m.prompt, status: m.status })) }),
+    actions: {
+      fill_create: { desc: "Fill in the Create form (picture or video) with a prompt the person can read and change; they press Make themselves.", args: { kind: "picture | video", prompt: "the full prompt", shape: "optional: 1:1, 2:3, 3:2, 16:9, 9:16" }, auto: true,
+        label: (a) => `Fill in the ${a.kind === "video" ? "video" : "picture"} form`,
+        run: async (a) => { S.kind = a.kind === "video" ? "video" : "picture"; if (!S.model[S.kind]) await loadModel(S.kind); $("prompt").value = String(a.prompt || ""); if (a.shape) { if (S.kind === "picture" && $("aspect").querySelector(`option[value="${a.shape}"]`)) $("aspect").value = a.shape; if (S.kind === "video" && $("vaspect").querySelector(`option[value="${a.shape}"]`)) $("vaspect").value = a.shape; } save(); drawForm(); return "Filled in: check it and press Make."; } },
+    } });
+  (async () => {
+    $("prompt").value = keep.prompt || "";
+    await Promise.all([loadModel("picture"), loadModel("video"), loadList()]);
+    drawForm();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "ibasho": { "command": "node", "args": ["page-editor/mcp.mjs"] }
+  }
+}

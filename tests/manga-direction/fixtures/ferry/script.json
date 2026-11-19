@@ -1,0 +1,17 @@
+{ "title": "The Last Ferry",
+  "beats": [
+    { "id": "S1", "type": "scene", "text": "FERRY PIER. NIGHT." },
+    { "id": "A001", "type": "action", "text": "Mara waits at the end of the pier. The last ferry is late." },
+    { "id": "L001", "type": "line", "speaker": "Mara", "text": "You said nine." },
+    { "id": "L002", "type": "line", "speaker": "Joss", "text": "I said about nine." },
+    { "id": "L003", "type": "line", "speaker": "Mara", "text": "It is ten to ten." },
+    { "id": "A002", "type": "action", "text": "Joss sets a wet canvas bag on the boards." },
+    { "id": "L004", "type": "line", "speaker": "Joss", "text": "I had to go back for it." },
+    { "id": "L005", "type": "line", "speaker": "Mara", "text": "For what?" },
+    { "id": "A003", "type": "action", "text": "He opens the bag. Inside, their mother's ferry lamp, lit." },
+    { "id": "L006", "type": "line", "speaker": "Joss", "text": "She kept it burning." },
+    { "id": "S2", "type": "scene", "text": "ON THE FERRY. LATER." },
+    { "id": "L007", "type": "line", "speaker": "Mara", "text": "You could have told me." },
+    { "id": "L008", "type": "line", "speaker": "Joss", "text": "You would have said no." },
+    { "id": "L009", "type": "line", "speaker": "Mara", "text": "I would have come with you!" }
+  ] }

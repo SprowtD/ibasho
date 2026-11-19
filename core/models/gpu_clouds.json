@@ -1,0 +1,52 @@
+{
+ "checked": "2026-11-18",
+ "notes": [
+  "Starting prices in US$ per GPU-hour, read 18 Nov 2026. The router replaces them with live prices and stock where the cloud has a price API (live_prices).",
+  "speed = rough speed for picture/video diffusion relative to an RTX 4090 (estimates, not benchmarks); replaced by Ibasho's own logged run times per model and GPU as runs happen.",
+  "startup_s = time before the job can start (machine start + model download), billed on pods."
+ ],
+ "gpus": {
+  "RTX 4090": {"vram": 24, "speed": 1.0},
+  "RTX 5090": {"vram": 32, "speed": 1.4},
+  "L40S": {"vram": 48, "speed": 0.9},
+  "A100 80GB": {"vram": 80, "speed": 1.0},
+  "H100": {"vram": 80, "speed": 2.0},
+  "H200": {"vram": 141, "speed": 2.2},
+  "B200": {"vram": 180, "speed": 3.2}
+ },
+ "clouds": [
+  {"id": "runpod", "name": "RunPod (pods)", "control": "REST, GraphQL, runpodctl, MCP", "billing": "per second", "card_ok": true, "startup_s": 240,
+   "live_prices": "GraphQL gpuTypes { securePrice communityPrice lowestPrice { uninterruptablePrice stockStatus } } (needs the key)",
+   "prices": {"RTX 4090": 0.34, "RTX 5090": 0.69, "L40S": 0.79, "A100 80GB": 1.19, "H100": 1.99, "H200": 3.59, "B200": 5.98}, "first": true,
+   "note": "Community prices; secure cloud costs more (4090 $0.89, H100 $2.89+). Already used by the studio."},
+  {"id": "runpod-serverless", "name": "RunPod (serverless)", "control": "same as RunPod", "billing": "per second", "card_ok": true, "startup_s": 30,
+   "live_prices": "same as RunPod", "prices": {"RTX 4090": 1.34, "RTX 5090": 1.89, "L40S": 1.89, "A100 80GB": 2.99, "H100": 5.89, "H200": 6.99, "B200": 10.79}, "first": true,
+   "note": "Costs more an hour but bills only while working; best for short jobs."},
+  {"id": "vast", "name": "Vast.ai (marketplace)", "control": "REST + vastai CLI", "billing": "per second, no minimum", "card_ok": true, "startup_s": 300,
+   "live_prices": "GET https://console.vast.ai/api/v0/bundles/ (works without a key)",
+   "prices": {"RTX 4090": 0.49, "RTX 5090": 0.5, "L40S": 0.8, "A100 80GB": 0.73, "H100": 2.54, "H200": 4.3, "B200": 6.7}, "first": true,
+   "note": "Often cheapest; machines are other people's, so reliability varies."},
+  {"id": "lambda", "name": "Lambda", "control": "REST", "billing": "by the minute (unconfirmed)", "card_ok": true, "startup_s": 300,
+   "live_prices": "GET /api/v1/instance-types (price_cents_per_hour, regions_with_capacity_available)",
+   "prices": {"A100 80GB": 3.19, "H100": 3.79, "B200": 7.69}, "first": true, "note": "Big data-centre GPUs only."},
+  {"id": "modal", "name": "Modal (serverless)", "control": "Python SDK", "billing": "per second; loading and idle billed; $30 free a month", "card_ok": true, "startup_s": 60,
+   "live_prices": null, "prices": {"L40S": 1.95, "A100 80GB": 2.5, "H100": 3.95, "H200": 4.54, "B200": 6.25}, "first": true,
+   "note": "Cleanest serverless; the free $30 a month covers small users."},
+  {"id": "salad", "name": "Salad (consumer GPUs)", "control": "REST", "billing": "per second", "card_ok": true, "startup_s": 300,
+   "live_prices": "availability only", "prices": {"RTX 4090": 0.3, "RTX 5090": 0.45}, "first": false,
+   "note": "Cheapest 4090/5090 but can be interrupted; later."},
+  {"id": "thunder", "name": "Thunder Compute", "control": "tnr CLI, REST", "billing": "per minute", "card_ok": true, "startup_s": 120,
+   "live_prices": "availability only", "prices": {"A100 80GB": 1.09, "H100": 3.2}, "first": false, "note": ""},
+  {"id": "novita", "name": "Novita", "control": "API", "billing": "unconfirmed", "card_ok": true, "startup_s": 240,
+   "live_prices": null, "prices": {"RTX 4090": 0.33, "H100": 3.39}, "first": false, "note": "Prices from a September tracker."},
+  {"id": "koyeb", "name": "Koyeb (serverless)", "control": "API, CLI", "billing": "per second, scales to zero; needs the $29/month Pro plan", "card_ok": true, "startup_s": 60,
+   "live_prices": null, "prices": {"L40S": 1.2, "A100 80GB": 1.6, "H100": 2.5, "H200": 3.0, "B200": 5.5}, "first": false, "note": ""}
+ ],
+ "rule": {
+  "fit": "keep GPUs with vram >= the model's need x 1.15; drop out-of-stock offers and models the person's region forbids",
+  "time": "seconds = base_seconds_on_4090 / speed + startup_s",
+  "cheapest": "lowest total cost of the job (not the lowest hourly price)",
+  "fastest": "shortest time",
+  "default": "the fastest choice costing no more than 1.5x the cheapest (studio rule: +$1-2/h is fine if it halves the time)"
+ }
+}

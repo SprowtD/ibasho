@@ -1,0 +1,16 @@
+page-editor/saved/
+node_modules/
+page-editor/samples/*/art/*-take*.png
+page-editor/samples/*/art/panels/*.png
+page-editor/samples/*/art/panels/refs/
+page-editor/projects/
+page-editor/styles/*.png
+page-editor/styles/codex.log
+page-editor/series/
+page-editor/anime-scenes/
+page-editor/anime-looks/
+anime/ui/looks/work/
+
+# audits and other notes that must not be public
+docs/private/
+__pycache__/

@@ -1,0 +1,358 @@
+/* Ibasho studio look: shared by the manga editor (index.html) and the anime screens (/anime/).
+ * Loaded AFTER each page's own <style>, so these rules win at equal weight.
+ * Dark is the default; the switch in the top bar stores "ibasho-theme" and sets data-theme on <html> (studio.js).
+ * Idea: a fixed application frame like editing software: top bar, docked side panels with thin dividers,
+ * the work in the middle, a status bar at the bottom. Nothing floats on rounded cards. */
+@font-face { font-family: "Manrope"; src: url("/fonts/Manrope-var.woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
+/* Lantern red (look "C Pro", chosen 18 Nov; canvas https://claude.ai/artifact/8eSDiNNoEWBfEKuhjNcCVp).
+ * The --blue names are kept so nothing else has to change: they now carry the red accent. Money = gold. */
+:root {
+  --bg: #0b0908;          /* the desk behind the page */
+  --surface: #14100e;     /* docked panels and bars */
+  --raise: #201916;       /* buttons, fields */
+  --hover: #2b221e;
+  --line: rgb(255 255 255 / .07);
+  --line-2: rgb(255 255 255 / .14);
+  --ink: #f6f0ec;
+  --muted: #b3a49b;
+  --blue: #ff7a5c;        /* selection, links, the active tool (Lantern red) */
+  --blue-soft: rgb(255 122 92 / .13);
+  --accent: #f2603f;      /* filled primary button */
+  --accent-top: #ff8c70;  /* top of the primary button's gradient */
+  --on-accent: #250803;
+  --glow: 0 8px 24px rgb(242 96 63 / .32);
+  --red: #ff6b6b; --red-soft: rgb(255 107 107 / .14);
+  --amber: #f2d06b;       /* money and "working": gold */
+  --ok: #6fd3a0; --ok-soft: rgb(111 211 160 / .14);
+  --card-shadow: none;
+  --ui: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --r: 10px;              /* corner of a control */
+  --r-card: 14px;
+  --bar: 52px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #f7f4f1; --surface: #ffffff; --raise: #ffffff; --hover: #f1ebe6; --line: #ece4de; --line-2: #e1d7d0;
+  --ink: #1a1210; --muted: #6a5a52; --blue: #e5502f; --blue-soft: #fdece7; --accent: #dd4826; --accent-top: #f2694a; --on-accent: #ffffff;
+  --glow: 0 6px 18px rgb(221 72 38 / .28);
+  --red: #c42f2f; --red-soft: #fbe7e5; --amber: #a3640e; --ok: #1f7a4c; --ok-soft: #dff1e7;
+  --card-shadow: 0 6px 20px rgb(40 20 10 / .08);
+  color-scheme: light;
+}
+
+html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+body { background: var(--bg); color: var(--ink); font: 1rem/1.4 var(--ui); font-feature-settings: "tnum" 1, "cv11" 1; margin: 0; padding: 0 0 calc(34px + env(safe-area-inset-bottom, 0px)); }
+::selection { background: var(--accent); color: var(--on-accent); }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+
+/* ---------- controls ---------- */
+.btn { border: 1px solid var(--line-2); background: var(--raise); color: var(--ink); border-radius: var(--r); padding: 6px 12px; font-weight: 600; min-height: 40px; }
+.btn:hover:not(:disabled) { background: var(--hover); }
+.btn.primary, a.btn.primary { background: linear-gradient(180deg, var(--accent-top), var(--accent)); border-color: transparent; color: var(--on-accent); font-weight: 800; box-shadow: var(--glow), inset 0 1px 0 rgb(255 255 255 / .3); }
+.btn.primary:hover:not(:disabled) { background: linear-gradient(180deg, var(--accent-top), var(--accent)); filter: brightness(1.06); }
+.btn.link { border: 0; background: none; color: var(--blue); }
+.btn.link:hover:not(:disabled) { background: none; text-decoration: underline; }
+.btn.ghost { background: none; border-color: transparent; }
+.btn.danger { color: var(--red); }
+textarea, input[type="text"], input[type="file"], select, #projSel { border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); border-radius: var(--r); }
+input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
+.tabs, .segs { background: var(--bg); border: 1px solid var(--line); border-radius: var(--r); padding: 2px; gap: 2px; }
+.tab, .seg { border-radius: 7px; font-weight: 600; }
+.seg { border: 0; background: none; color: var(--muted); font-family: inherit; cursor: pointer; }
+.tab:hover, .seg:hover { color: var(--ink); }
+.tab[aria-selected="true"], .seg[aria-pressed="true"] { background: var(--hover); color: var(--ink); font-weight: 800; box-shadow: 0 1px 2px rgb(0 0 0 / .18); }
+.hint, .empty { color: var(--muted); }
+dialog { border: 1px solid var(--line-2) !important; border-radius: var(--r-card) !important; background: var(--surface) !important; color: var(--ink); box-shadow: 0 24px 80px rgb(0 0 0 / .5); }
+.dlg-head { background: var(--surface) !important; }
+
+/* ---------- top bar ---------- */
+.appbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-height: var(--bar); margin: 0; padding: 4px max(10px, env(safe-area-inset-right, 0px)) 4px max(10px, env(safe-area-inset-left, 0px)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.appbar .brand { display: inline-flex; align-items: center; gap: 10px; margin: 0 8px 0 2px; font-size: 1.05rem; font-weight: 800; letter-spacing: -.01em; color: var(--ink); text-decoration: none; }
+.appbar .brand svg { width: 26px; height: 26px; flex: none; color: var(--blue); }
+.ws { display: flex; gap: 2px; }
+.wsb { display: inline-flex; align-items: center; border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600; font-size: .9rem; padding: 0 13px; min-height: 34px; border-radius: 9px; text-decoration: none; cursor: pointer; font-weight: 700; }
+.wsb:hover { color: var(--ink); background: var(--raise); }
+.wsb[aria-current="page"] { color: var(--ink); background: var(--hover); }
+.appbar .proj { min-width: 0; }
+.appbar #projSel { padding: 4px 8px; font-weight: 600; color: var(--ink); max-width: min(46vw, 340px); min-height: 30px; }
+.appbar .spacer { flex: 1; }
+.iconbtn { display: inline-grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); background: var(--raise); color: var(--muted); border-radius: 10px; cursor: pointer; padding: 0; }
+.iconbtn:hover { color: var(--ink); background: var(--raise); }
+.iconbtn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- status bar ---------- */
+.statusbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: center; gap: 14px; min-height: 26px; padding: 2px max(10px, env(safe-area-inset-right, 0px)) calc(2px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px)); background: var(--surface); border-top: 1px solid var(--line); font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.statusbar .status, .statusbar #status { margin: 0; padding: 0; border: 0; background: none; border-radius: 0; font-size: inherit; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
+.statusbar #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.statusbar .spacer { flex: 1; }
+.statusbar .mono { font-family: var(--mono); font-size: .7rem; }
+
+/* ---------- docked panels (manga editor) ---------- */
+.shell { gap: 0; }
+.toolbar { margin: 0; padding: 6px 10px; gap: 6px; background: var(--surface); border-bottom: 1px solid var(--line); }
+#side { background: var(--surface); border: 0; border-right: 1px solid var(--line); border-radius: 0; padding: 4px; }
+#side h2, .panel h2 { font-size: .68rem; font-weight: 600; letter-spacing: .1em; }
+.pgrow, .pnrow { border-radius: 8px; }
+.pgrow:hover, .pnrow:hover { background: var(--raise); }
+.pgrow[aria-current="true"], .pnrow[aria-pressed="true"] { background: var(--blue-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--blue); }
+.panel { background: var(--surface); border: 0; border-left: 1px solid var(--line); border-radius: 0; padding: 12px; gap: 12px; }
+#homeView, #bookView, #seriesView, #chapterView { padding: 14px max(14px, env(safe-area-inset-right, 0px)) 24px max(14px, env(safe-area-inset-left, 0px)); }
+.stage { padding: 12px; }
+#page { box-shadow: 0 0 0 1px rgb(0 0 0 / .5), 0 10px 40px rgb(0 0 0 / .45); }
+.se-box, .ccard, .bk-ch, .pg, .pcard, .scard, .stylebtn, #newForm, #bookForm, .tmpl, .kind, .person, .refmenu, .art-review { border-radius: var(--r-card); }
+.se-box, .ccard, .bk-ch, .pg, .pcard, #newForm, #bookForm { background: var(--surface); border-color: var(--line); box-shadow: var(--card-shadow); }
+.bk-person, .page-note, .queued-note, #checks button, #refList li, .thumb, .refgrid button { border-radius: 8px; }
+.pg { padding: 6px; }
+.pg:hover { border-color: var(--line-2); }
+.chap-top h2 { font-size: 1.05rem; font-weight: 600; }
+.dot, .chip.warn, .tag { border-radius: 999px; }
+
+/* ---------- home: projects and their flows ---------- */
+.home-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.home-head h2 { margin: 0 auto 0 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -.02em; }
+.home-head p { flex-basis: 100%; margin: 0; color: var(--muted); font-size: .9rem; }
+.sect-h { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 -8px; font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.sect-h small { text-transform: none; letter-spacing: 0; font-size: .8rem; font-weight: 400; }
+.plist { display: grid; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); overflow: hidden; box-shadow: var(--card-shadow); }
+.plist:empty { display: none; }
+.prow { display: grid; grid-template-columns: 92px minmax(150px, 1fr) minmax(0, 3.2fr); gap: 12px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--line); }
+.prow:first-child { border-top: 0; }
+.prow .pt { width: 92px; aspect-ratio: 3 / 2; object-fit: cover; object-position: top; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); display: grid; place-items: center; color: var(--muted); font-size: .68rem; text-align: center; overflow: hidden; }
+.prow .pn { display: grid; gap: 2px; min-width: 0; text-align: left; border: 0; background: none; padding: 0; color: inherit; }
+.prow .pn b { font-weight: 600; overflow-wrap: anywhere; }
+.prow button.pn:hover b, .prow a.pn:hover b { color: var(--blue); }
+.prow a.pn { text-decoration: none; }
+.prow .pn small { color: var(--muted); font-size: .8rem; }
+.prow .state { font-size: .8rem; font-weight: 600; color: var(--amber); }
+.prow .state.bad { color: var(--red); }
+.tagx { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 999px; font: 500 .62rem var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; vertical-align: 2px; }
+/* The flow: one cell per step of the work, in order. The top edge shows the state. */
+.flow { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--line); gap: 1px; }
+.step { display: grid; gap: 1px; align-content: center; text-align: left; min-width: 0; min-height: 46px; padding: 5px 9px; border: 0; background: var(--raise); color: var(--ink); font: inherit; text-decoration: none; cursor: pointer; box-shadow: inset 0 2px 0 var(--line-2); }
+.step:hover { background: var(--hover); }
+.step .sl { font-size: .62rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step .sv { font-size: .84rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step[data-st="done"] { box-shadow: inset 0 2px 0 var(--ok); }
+.step[data-st="part"] { box-shadow: inset 0 2px 0 var(--blue); }
+.step[data-st="busy"] { box-shadow: inset 0 2px 0 var(--amber); }
+.step[data-st="bad"] { box-shadow: inset 0 2px 0 var(--red); }
+.step[data-st="none"] .sv { color: var(--muted); font-weight: 500; }
+.flow-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; font-size: .76rem; color: var(--muted); }
+.flow-key i { display: inline-block; width: 14px; height: 3px; margin-right: 5px; vertical-align: middle; background: var(--line-2); }
+.newrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.newrow details[open] { flex-basis: 100%; order: 9; }
+.newrow .newproj summary { width: auto; }
+.home-empty { padding: 18px 12px; color: var(--muted); font-size: .9rem; }
+
+@media (max-width: 860px) {
+  .prow { grid-template-columns: 64px minmax(0, 1fr); }
+  .prow .pt { width: 64px; }
+  .prow .flow { grid-column: 1 / -1; grid-auto-flow: row; grid-template-columns: repeat(auto-fit, minmax(30%, 1fr)); }
+}
+
+/* ---------- anime screens inside the same frame ---------- */
+body.anime main { max-width: 980px; margin: 0 auto; padding: 14px max(14px, env(safe-area-inset-right, 0px)) 24px max(14px, env(safe-area-inset-left, 0px)); }
+body.anime .card { border-radius: var(--r-card); background: var(--surface); border-color: var(--line); box-shadow: var(--card-shadow); }
+body.anime .chip { border-radius: 999px; }
+body.anime .thumb { border-radius: 8px; }
+
+/* ---------- the fixed frame, on a screen wide enough for docked panels ---------- */
+@media (min-width: 1041px) {
+  body.studio { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+  body.studio .appbar { position: static; flex: none; flex-wrap: nowrap; }
+  body.studio .statusbar { position: static; flex: none; }
+  body.studio .shell { flex: 1; min-height: 0; grid-template-columns: 248px minmax(0, 1fr); align-items: stretch; }
+  body.studio.at-home .shell { grid-template-columns: minmax(0, 1fr); }
+  body.studio #side { position: static; max-height: none; height: 100%; overflow-y: auto; }
+  body.studio .col { display: flex; flex-direction: column; min-height: 0; }
+  body.studio .toolbar { flex: none; }
+  body.studio #homeView, body.studio #bookView, body.studio #seriesView, body.studio #chapterView { flex: 1; min-height: 0; overflow-y: auto; align-content: start; grid-auto-rows: max-content; }
+  body.studio .work { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 344px; gap: 0; align-items: stretch; justify-content: stretch; }
+  body.studio .stage { min-height: 0; overflow: auto; align-items: center; }
+  body.studio #page { height: min(calc(100dvh - 148px), 1400px); }
+  body.studio .panel { overflow-y: auto; min-height: 0; align-content: start; }
+  body.anime { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+  body.anime .appbar { position: static; flex: none; }
+  body.anime .statusbar { position: static; flex: none; }
+  body.anime .scroll { flex: 1; min-height: 0; overflow-y: auto; }
+}
+/* A mouse or trackpad: denser type and controls, as in desktop software. */
+@media (min-width: 1041px) and (pointer: fine) {
+  html { font-size: 14px; }
+  .btn { min-height: 30px; padding: 4px 11px; }
+  .tab { padding: 5px 11px; }
+  .pgrow { min-height: 30px; padding: 4px 8px; }
+  .pnrow { min-height: 28px; padding: 3px 8px; }
+  textarea, input[type="text"], select { padding: 6px 8px; }
+}
+@media (max-width: 1040px) {
+  .appbar .proj { order: 5; flex-basis: 100%; }
+  .appbar #projSel { max-width: 100%; width: 100%; }
+  #side { border-right: 0; border-bottom: 1px solid var(--line); }
+  .panel { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 760px) {
+  .appbar { position: static; }
+  .stage { background: var(--bg); }
+  .toolbar .btn { min-height: 36px; padding: 4px 10px; }
+  #modeTabs { flex-basis: 100%; }
+  #modeTabs .tab { flex: 1; padding: 7px 4px; }
+  .statusbar #sbProj { display: none; }
+  .step .u { display: none; }
+}
+
+/* spending in the status bar */
+.spendchip { margin-left: 12px; color: var(--amber); font-family: var(--mono); font-size: .8rem; text-decoration: none; white-space: nowrap; }
+.spendchip:hover { color: var(--ink); text-decoration: underline; }
+.spendchip.near { color: var(--red); font-weight: 650; }
+/* picture quality on the Art panel: each level with its price for this panel */
+.qsegs { display: flex; margin-top: 6px; }
+.qsegs .seg { flex: 1; display: flex; flex-direction: column; align-items: center; line-height: 1.15; padding: 6px 4px; min-height: 44px; }
+.qsegs .seg small { color: var(--muted); font-weight: 500; font-size: .76rem; }
+/* tags from the asset bible on the Art panel */
+.tagchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tagchip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 11px 4px 4px; font-weight: 700; border-radius: 999px; }
+.tagchip img { width: 28px; height: 28px; object-fit: cover; border-radius: 999px; }
+.tagchip small { color: var(--muted); font-weight: 500; }
+.tagchip[aria-pressed="true"] { background: var(--blue-soft); border-color: var(--blue); color: var(--ink); }
+.tagchip[aria-pressed="true"]::before { content: "✓"; color: var(--blue); margin-left: 4px; }
+
+/* ---------- C Pro layout, pass 2 (18 Nov): tool rail, page thumbnails, breadcrumb, Home banner ---------- */
+/* Tools: the mode tabs. A row on a narrow screen, a rail on the left of the frame on a wide one. */
+.rail .tab { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.rail .tab svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.rail .tab[aria-selected="true"] { color: var(--blue); background: var(--blue-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 35%, transparent); }
+@media (max-width: 1040px) { .rail { display: flex; margin: 0 0 8px; } .rail .tab { flex: 1; padding: 8px 4px; } }
+@media (max-width: 520px) { .rail .tab svg { display: none; } }
+@media (min-width: 1041px) {
+  body.studio .shell { grid-template-columns: 78px 236px minmax(0, 1fr); }
+  body.studio.at-home .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail { flex-direction: column; align-items: center; gap: 4px; margin: 0; padding: 10px 0; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: var(--surface); height: 100%; overflow-y: auto; }
+  .rail .tab { flex-direction: column; gap: 4px; width: 62px; min-height: 58px; padding: 6px 2px; border-radius: 12px; font-size: .7rem; font-weight: 700; color: var(--muted); }
+  .rail .tab svg { width: 21px; height: 21px; }
+  .rail .tab:hover { color: var(--ink); background: var(--raise); }
+}
+/* Pages: a thumbnail of each page; the open page lists its panels underneath */
+.pgrow .pthumb { flex: none; width: 40px; aspect-ratio: 2 / 3; border-radius: 4px; overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--line-2); }
+.pgrow .pthumb svg { display: block; width: 100%; height: 100%; }
+.pgrow[aria-current="true"] .pthumb { box-shadow: 0 0 0 2px var(--blue); }
+.pgrow .pl { display: grid; min-width: 0; text-align: left; line-height: 1.25; }
+.pgrow .pl small { font: 500 .7rem var(--mono); color: var(--muted); }
+#side .pgrow { min-height: 70px; }
+/* Top bar: the project picker reads as the start of a breadcrumb */
+.appbar #projSel { border-color: transparent; background: transparent; font-weight: 800; }
+.appbar #projSel:hover { background: var(--raise); }
+.crumb { min-width: 0; color: var(--muted); font-weight: 700; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumb b { color: var(--ink); font-weight: 800; }
+/* Home: carry on with the last thing you worked on, your art front and centre */
+.carry { position: relative; display: flex; align-items: flex-end; min-height: 300px; border-radius: 22px; overflow: hidden; background: var(--surface) center 30% / cover no-repeat; box-shadow: var(--card-shadow); }
+.carry::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(11 9 8 / .94) 0%, rgb(11 9 8 / .62) 45%, rgb(11 9 8 / .04) 100%); }
+:root[data-theme="light"] .carry::before { background: linear-gradient(90deg, rgb(255 255 255 / .96) 0%, rgb(255 255 255 / .74) 42%, rgb(255 255 255 / 0) 78%); }
+.carry .in { position: relative; display: grid; gap: 10px; max-width: 560px; padding: 30px; }
+.carry .kick { font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--blue); }
+.carry h3 { margin: 0; font-size: 2.4rem; font-weight: 800; letter-spacing: -.025em; line-height: 1.05; }
+.carry p { margin: 0; color: var(--muted); font-size: 1rem; }
+.carry .bar { width: 280px; max-width: 100%; height: 5px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.carry .bar i { display: block; height: 100%; background: var(--blue); }
+.carry .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.carry .btn { min-height: 44px; padding: 0 20px; border-radius: 12px; white-space: nowrap; }
+@media (max-width: 760px) { .carry { min-height: 240px; } .carry h3 { font-size: 1.8rem; } .carry .in { padding: 20px; } }
+
+/* ---------- Phone (C Pro, 18 Nov): page first, a bottom bar, tools and pages as sheets that slide up ---------- */
+.sheet-grip { display: none; }
+@media (max-width: 760px) {
+  :root { --bb: calc(96px + env(safe-area-inset-bottom, 0px)); } /* room taken by the bottom bar and the status line */
+  body { padding-bottom: var(--bb); }
+  /* Workspaces: a floating bar at the bottom (Home, Manga, Anime, Create) */
+  .ws { position: fixed; z-index: 30; left: 10px; right: 10px; bottom: calc(32px + env(safe-area-inset-bottom, 0px)); display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding: 6px; height: 56px; box-sizing: border-box;
+    background: var(--surface); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 10px 30px rgb(0 0 0 / .35); }
+  .ws .wsb { justify-content: center; min-height: 0; padding: 0 4px; font-size: .82rem; }
+  .ws .wsb[aria-current="page"] { background: var(--blue-soft); color: var(--blue); }
+  /* Inside a manga project the bottom bar is the tools; the workspaces move up into the top bar */
+  body.studio:not(.at-home) .ws { position: static; height: auto; padding: 0; border: 0; background: none; box-shadow: none; display: flex; }
+  body.studio:not(.at-home) .ws .wsb { padding: 0 8px; font-size: .8rem; }
+  body.studio:not(.at-home) #modeTabs.rail { position: fixed; z-index: 30; left: 10px; right: 10px; bottom: calc(32px + env(safe-area-inset-bottom, 0px)); display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; margin: 0; padding: 5px; height: 58px; box-sizing: border-box;
+    background: var(--surface); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 10px 30px rgb(0 0 0 / .35); }
+  body.studio:not(.at-home) #modeTabs.rail .tab { flex-direction: column; gap: 2px; padding: 2px 0; font-size: .64rem; border-radius: 10px; }
+  body.studio:not(.at-home) #modeTabs.rail .tab svg { display: block; width: 18px; height: 18px; }
+  body.studio:not(.at-home) #modeTabs.rail .tab[hidden] { display: none; }
+  /* The tools (inspector): a sheet over the lower part of the screen; the grip folds it away */
+  body.studio:not(.at-home) .work .panel { position: fixed; z-index: 25; left: 0; right: 0; bottom: var(--bb); max-height: 38vh; overflow-y: auto; padding: 0 14px 14px; border: 0; border-top: 1px solid var(--line-2); border-radius: 20px 20px 0 0; box-shadow: 0 -14px 34px rgb(0 0 0 / .35); transition: max-height .2s; }
+  body.studio:not(.at-home) .work .panel.sheet-min { max-height: 34px; overflow: hidden; }
+  .sheet-grip { display: block; position: sticky; top: 0; z-index: 1; width: calc(100% + 28px); height: 30px; margin: 0 -14px 4px; border: 0; background: var(--surface); cursor: pointer; }
+  .sheet-grip::before { content: ""; display: block; width: 40px; height: 4px; margin: 0 auto; border-radius: 2px; background: var(--line-2); }
+  body.studio:not(.at-home) .work { padding-bottom: calc(38vh + 12px); }
+  /* Pages: the list slides up as a sheet from the Pages button */
+  body.studio.side-open #side { position: fixed; z-index: 27; left: 0; right: 0; top: auto; bottom: var(--bb); max-height: 62vh; overflow-y: auto; border: 0; border-top: 1px solid var(--line-2); border-radius: 20px 20px 0 0; box-shadow: 0 -14px 34px rgb(0 0 0 / .45); padding: 10px; }
+  /* The Assistant button sits above the bars */
+  body .as-btn { bottom: calc(var(--bb) + 8px); width: 48px; height: 48px; min-height: 48px; padding: 0; font-size: 0; display: grid; place-items: center; border-radius: 999px; }
+  body .as-btn::before { content: "✦"; font-size: 20px; }
+  body.studio:not(.at-home) .as-btn { bottom: calc(var(--bb) + 38vh + 8px); }
+  .carry::before { background: linear-gradient(180deg, rgb(11 9 8 / .62) 0%, rgb(11 9 8 / .93) 50%); }
+  :root[data-theme="light"] .carry::before { background: linear-gradient(180deg, rgb(255 255 255 / .7) 0%, rgb(255 255 255 / .95) 50%); }
+}
+
+/* ---------- Resizable, foldable panels and focus mode (wide screens) ---------- */
+.resizer { display: none; }
+@media (min-width: 1041px) {
+  body.studio .shell { grid-template-columns: 78px var(--side-w, 236px) minmax(0, 1fr); }
+  body.studio .work { grid-template-columns: minmax(0, 1fr) var(--panel-w, 344px); }
+  body.studio .col, body.studio .stage { position: relative; }
+  .resizer { display: block; position: absolute; top: 0; bottom: 0; z-index: 6; width: 9px; cursor: col-resize; touch-action: none; }
+  .col > .resizer { left: -5px; }
+  .stage > .resizer { right: -5px; }
+  .resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; transition: background .12s; }
+  .resizer:hover::before, .resizer:focus-visible::before, .resizer.drag::before { left: 3px; width: 3px; background: var(--blue); }
+  .resizer.min { width: 16px; }
+  .resizer.min::after { content: "›"; position: absolute; top: 50%; left: 2px; transform: translateY(-50%); width: 16px; height: 44px; display: grid; place-items: center; border-radius: 0 8px 8px 0; background: var(--raise); border: 1px solid var(--line-2); border-left: 0; color: var(--muted); font-weight: 800; }
+  .stage > .resizer.min::after { content: "‹"; left: auto; right: 2px; border-radius: 8px 0 0 8px; border: 1px solid var(--line-2); border-right: 0; }
+  body.side-min #side { visibility: hidden; padding: 0; border: 0; overflow: hidden; }
+  body.panel-min .work .panel { visibility: hidden; padding: 0; border: 0; overflow: hidden; }
+  /* focus: only the page */
+  body.studio.focus .shell { grid-template-columns: 0 0 minmax(0, 1fr); }
+  body.studio.focus #modeTabs, body.studio.focus #side, body.studio.focus .toolbar, body.studio.focus .resizer { visibility: hidden; overflow: hidden; border: 0; padding: 0; }
+  body.studio.focus .work { grid-template-columns: minmax(0, 1fr) 0; }
+  body.studio.focus .work .panel { visibility: hidden; padding: 0; border: 0; }
+  body.studio.focus #page { height: min(calc(100dvh - 120px), 1600px); }
+}
+.focus-chip { position: fixed; z-index: 40; top: calc(var(--bar) + 10px); left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-2); color: var(--muted); font-size: .82rem; box-shadow: 0 10px 30px rgb(0 0 0 / .35); }
+.focus-chip kbd { font: 600 .76rem var(--mono); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-2); color: var(--ink); }
+/* Settings: the look choice and the keys */
+.set-look { align-items: center; justify-content: space-between; flex-wrap: wrap; cursor: default; }
+.set-look .segs { display: inline-flex; }
+.set-look .seg { padding: 6px 12px; min-height: 36px; }
+.set-dlg { width: min(560px, calc(100vw - 24px)); padding: 16px 18px !important; }
+.set-dlg::backdrop { background: rgb(0 0 0 / .55); }
+.set-dlg .dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.set-dlg .dlg-head h2 { margin: 0; font-size: 1.2rem; }
+.set-dlg .setrow { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; }
+.set-dlg .setrow input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+.set-keys { margin-top: 14px; font-size: .84rem; }
+
+/* ---------- Chapter, Series and Book as real screens (C Pro, 18 Nov) ---------- */
+#chapterView, #seriesView, #bookView { max-width: 1320px; }
+.chap-hero { position: relative; overflow: hidden; align-items: flex-end; min-height: 200px; padding: 26px 28px; border-radius: 20px; background: var(--surface) center 35% / cover no-repeat; border: 1px solid var(--line); box-shadow: var(--card-shadow); }
+.chap-hero::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(11 9 8 / .95) 0%, rgb(11 9 8 / .72) 50%, rgb(11 9 8 / .2) 100%); }
+:root[data-theme="light"] .chap-hero::before { background: linear-gradient(90deg, rgb(255 255 255 / .97) 0%, rgb(255 255 255 / .8) 50%, rgb(255 255 255 / .2) 100%); }
+.chap-hero > * { position: relative; }
+.chap-hero h2 { margin: 0 0 4px; font-size: 2rem; font-weight: 800; letter-spacing: -.02em; }
+.chap-hero p { color: var(--muted); max-width: 70ch; }
+.chap-hero .kick { display: block; margin-bottom: 4px; font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--blue); }
+.tiles { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 8px; }
+.tiles span { display: grid; min-width: 118px; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--raise) 82%, transparent); border: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+.tiles b { color: var(--ink); font-size: 1.5rem; font-weight: 800; line-height: 1.1; }
+.tiles b small { color: var(--muted); font-size: .9rem; font-weight: 600; }
+.chap-grid { margin-top: 18px; }
+.se-nav { position: sticky; top: 0; z-index: 4; display: flex; flex-wrap: wrap; gap: 4px; margin: 14px 0 4px; padding: 6px; border-radius: 14px; background: color-mix(in srgb, var(--surface) 90%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border: 1px solid var(--line); }
+.se-nav a { padding: 7px 14px; border-radius: 9px; color: var(--muted); font-weight: 700; text-decoration: none; }
+.se-nav a:hover { color: var(--ink); background: var(--raise); }
+#seriesView > .chap-top:not(.chap-hero) { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); scroll-margin-top: 70px; }
+#seriesView > .chap-top:not(.chap-hero) h2, #bookView .se-box b { font-size: 1.35rem; font-weight: 800; letter-spacing: -.01em; }
+.cast-grid > * { border-radius: var(--r-card); }
+.bk-hero { min-height: 160px; background-image: linear-gradient(135deg, var(--raise), var(--bg)); }
+.bk-ch { border-radius: var(--r-card); padding: 14px 16px; box-shadow: var(--card-shadow); }
+.bk-ch .bar i { background: var(--blue); }
+@media (max-width: 760px) { .chap-hero { padding: 18px; min-height: 160px; } .chap-hero h2 { font-size: 1.5rem; } .chap-hero::before { background: linear-gradient(180deg, rgb(11 9 8 / .7), rgb(11 9 8 / .93)); } .tiles span { min-width: 0; flex: 1 1 40%; } }
+.se-hero { min-height: 0; background-image: linear-gradient(135deg, var(--raise), var(--bg)); }
