@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 
 const BASE = () => (process.env.OPENROUTER_BASE || "https://openrouter.ai").replace(/\/$/, "");
-const HEAD = (key) => ({ authorization: "Bearer " + key, "content-type": "application/json", "http-referer": "https://github.com/SprowtD/ibasho", "x-title": "Ibasho" });
+const HEAD = (key) => ({ authorization: "Bearer " + key, "content-type": "application/json", "http-referer": "https://github.com/SprowtD/ibasho-studio", "x-title": "Ibasho" });
 const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".ogg": "audio/ogg" };
 
 /** A plain sentence for the person when OpenRouter says no. */

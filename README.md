@@ -52,8 +52,8 @@ Give Ibasho a script or a whole book. It takes the story through the same steps 
 ### Run it
 
 ```bash
-git clone https://github.com/SprowtD/ibasho.git
-cd ibasho/page-editor
+git clone https://github.com/SprowtD/ibasho-studio.git
+cd ibasho-studio/page-editor
 node server.mjs            # then open http://localhost:5178
 ```
 
