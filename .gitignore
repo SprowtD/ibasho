@@ -14,3 +14,4 @@ anime/ui/looks/work/
 # audits and other notes that must not be public
 docs/private/
 __pycache__/
+private/.make_public.run
