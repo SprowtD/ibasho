@@ -89,6 +89,14 @@ try {
   pg = await saved();
   ok(first(pg).toned.strokes === 2 && !/has changed since/.test(await page.textContent("#toneInfo")), "toning the page again fits the new shape and keeps the hand's strokes");
   // the chapter screen offers the whole chapter
+  // the dot size is chosen on the screen, for the whole chapter
+  ok(await page.isVisible("#toneSet") && await page.inputValue("#toneSet") === "dots:60" && (await page.locator("#toneSet option").count()) === 6, "Art offers the dot size (five sizes and noise), at 60 lines to start");
+  await page.selectOption("#toneSet", "dots:40");
+  await page.waitForFunction(() => /Saved: 40 lines to the inch/.test(document.getElementById("status").textContent));
+  ok(JSON.parse(fs.readFileSync(path.join(dir, "toner.json"), "utf8")).lines === 40 && /toned with another choice/.test(await page.textContent("#toneSetNote")), "the choice is kept with the chapter, and a panel toned the old way says so: " + await page.textContent("#toneSetNote"));
+  await page.click("#tonePage");
+  await page.waitForFunction(() => /dots 40 lines/.test(document.getElementById("toneInfo").textContent), null, { timeout: 60000 });
+  ok(!/another choice/.test(await page.textContent("#toneSetNote")), "toned again, the panel carries the bigger dots: " + await page.textContent("#toneInfo"));
   await page.click('#modeTabs [data-mode="chapter"]');
   ok(await page.isVisible("#toneAllBtn"), "the Chapter screen offers Toner: tone every page");
   ok(errors.length === 0, "no script errors: " + errors.join(" | "));

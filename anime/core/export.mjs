@@ -35,13 +35,33 @@ export function gradeFilter(g) { if (!g) return ""; const off = (127.5 * (1 - g.
 const stamp = (t) => { const c = Math.max(0, Math.round(t * 100)), h = Math.floor(c / 360000), m = Math.floor(c / 6000) % 60, s = Math.floor(c / 100) % 60; return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(c % 100).padStart(2, "0")}`; };
 const assText = (t) => String(t == null ? "" : t).replace(/[{}\\]/g, " ").replace(/\s+/g, " ").trim();
 
-/** opts: { dir (scene folder), plan, sound, file(url) -> path on disk, out (mp4 path), say(msg) } */
-export async function exportScene({ dir, plan, sound, file, out, say = () => {}, subtitles = true, size, grade }) {
+/** The shapes a scene can be exported in: as made (16:9), upright for phones (9:16), or square (1:1). */
+export const SHAPES = { "16:9": [16, 9], "9:16": [9, 16], "1:1": [1, 1] };
+export const shapeOf = (v) => (Object.hasOwn(SHAPES, v) ? v : "16:9");
+/** Where a shot's picture is centred when it is cut to another shape: the shot's own focus point when it has one, else the middle
+ * of the people the plan places in it (the same point the player's thumbnails use), else the middle of the picture. -> [x, y], 0 to 1 */
+export function focusOf(s) {
+  const ok = (a) => Array.isArray(a) && a.length === 2 && a.every((v) => isFinite(+v)), c = (v) => Math.max(0, Math.min(1, +v));
+  if (ok(s.focus)) return [c(s.focus[0]), c(s.focus[1])];
+  const pts = (Array.isArray(s.blocking) ? s.blocking : []).map((w) => w && w.at).filter(ok);
+  return pts.length ? [c(pts.reduce((a, q) => a + +q[0], 0) / pts.length), c(pts.reduce((a, q) => a + +q[1], 0) / pts.length)] : [0.5, 0.5];
+}
+/** opts: { dir (scene folder), plan, sound, file(url) -> path on disk, out (mp4 path), say(msg),
+ *  shape: "16:9" | "9:16" | "1:1" (each picture and clip is cut to it around the shot's focus), twos: true = video clips are held two frames at a time } */
+export async function exportScene({ dir, plan, sound, file, out, say = () => {}, subtitles = true, size, grade, shape, twos = false }) {
   const shots = (plan.shots || []).filter((s) => (+s.duration || 0) > 0); if (!shots.length) throw new Error("the scene has no shots with a length");
   const clipOf = (s) => { const f = s.clip ? file(s.clip) : ""; return f && existsSync(f) ? f : ""; };
-  [W, H] = size === "hd" || (size !== "sd" && shots.some(clipOf)) ? [1920, 1080] : [1280, 720];
+  shape = shapeOf(shape);
+  { const big = size === "hd" || (size !== "sd" && shots.some(clipOf)), short = big ? 1080 : 720, long = big ? 1920 : 1280; // the short side is 720 (1080 with video clips), whatever the shape
+    [W, H] = shape === "9:16" ? [short, long] : shape === "1:1" ? [short, short] : [long, short]; }
+  const cut = shape !== "16:9", around = (s) => { const [fx, fy] = focusOf(s); return `(iw-ow)*${fx.toFixed(4)}:(ih-oh)*${fy.toFixed(4)}`; };
+  // a video clip in the picture's shape: shown whole with black bars as made (16:9); cut to fill around the shot's focus in the other shapes
+  const clipFit = (s) => (cut ? `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}:${around(s)}` : `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:black`);
+  // on twos: each drawing of a video clip is held for two frames (12 drawings a second), the cadence of hand-drawn anime. Stills with their slow camera moves are left smooth.
+  const held = twos ? `fps=${FPS / 2},fps=${FPS},` : "";
   const work = join(dir, "export", ".work"); await rm(work, { recursive: true, force: true }); await mkdir(work, { recursive: true });
   const starts = []; let total = 0; for (const s of shots) { starts.push(total); total += +s.duration; }
+  const tk = shape === "16:9" ? 1 : 0.6; // titles are set smaller in a narrow picture
   const frameAt = (t) => Math.round(t * FPS), lineOf = (id) => (plan.dialogue || []).find((d) => d.line_id === id);
   // 1. one silent piece per shot
   const list = [], pieces = [];
@@ -50,8 +70,8 @@ export async function exportScene({ dir, plan, sound, file, out, say = () => {},
     say(`Picture ${i + 1} of ${shots.length}`);
     const enc = ["-frames:v", String(n), "-r", String(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", "-an", piece];
     const clip = clipOf(s), secs = n / FPS, fd = fades(s, secs, i);
-    if (clip) await run(["-ss", String(+s.clip_from || 0), "-i", clip, "-vf", `${+s.clip_speed > 0 && +s.clip_speed !== 1 ? `setpts=PTS/${+s.clip_speed},` : ""}fps=${FPS},scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,tpad=stop_mode=clone:stop_duration=${Math.ceil(+s.duration) + 1},format=yuv420p${fd}`, ...enc]); // a clip shorter than its shot holds on its last picture
-    else if (pic && existsSync(pic)) await run(["-loop", "1", "-framerate", String(FPS), "-i", pic, "-vf", `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2},setsar=1,${zoompan(s, n)},format=yuv420p${fd}`, ...enc]);
+    if (clip) await run(["-ss", String(+s.clip_from || 0), "-i", clip, "-vf", `${+s.clip_speed > 0 && +s.clip_speed !== 1 ? `setpts=PTS/${+s.clip_speed},` : ""}fps=${FPS},${held}${clipFit(s)},setsar=1,tpad=stop_mode=clone:stop_duration=${Math.ceil(+s.duration) + 1},format=yuv420p${fd}`, ...enc]); // a clip shorter than its shot holds on its last picture
+    else if (pic && existsSync(pic)) await run(["-loop", "1", "-framerate", String(FPS), "-i", pic, "-vf", `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2}${cut ? ":" + around(s) : ""},setsar=1,${zoompan(s, n)},format=yuv420p${fd}`, ...enc]);
     else await run(["-f", "lavfi", "-i", `color=c=${s.title ? (s.title_bg === "white" ? "0xf4f1ea" : "0x000000") : "0x30333a"}:s=${W}x${H}:r=${FPS}`, "-vf", `format=yuv420p${fd}`, ...enc]);
     pieces.push({ piece, n });
   }
@@ -60,7 +80,7 @@ export async function exportScene({ dir, plan, sound, file, out, say = () => {},
     const d = fadeLen(s.tin_dur, +s.duration), nd = Math.max(2, Math.round(d * FPS)), tail = join(work, `t${String(i).padStart(3, "0")}.mp4`), mixed = join(work, `x${String(i).padStart(3, "0")}.mp4`), pc = clipOf(p), after = (+p.clip_from || 0) + +p.duration * (+p.clip_speed > 0 ? +p.clip_speed : 1);
     const enc = (k, f) => ["-frames:v", String(k), "-r", String(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", "-an", f];
     say(`Cross-fade into picture ${i + 1}`);
-    if (pc && !(+p.clip_speed > 0 && +p.clip_speed !== 1) && (+p.clip_dur || 0) - after >= d) await run(["-ss", String(after), "-i", pc, "-vf", `fps=${FPS},scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p`, ...enc(nd, tail)]);
+    if (pc && !(+p.clip_speed > 0 && +p.clip_speed !== 1) && (+p.clip_dur || 0) - after >= d) await run(["-ss", String(after), "-i", pc, "-vf", `fps=${FPS},${held}${clipFit(p)},setsar=1,format=yuv420p`, ...enc(nd, tail)]);
     else { const last = join(work, `l${i}.png`); await run(["-sseof", "-0.2", "-i", pieces[i - 1].piece, "-update", "1", "-q:v", "1", last]); await run(["-loop", "1", "-framerate", String(FPS), "-i", last, "-vf", "format=yuv420p", ...enc(nd, tail)]); }
     await run(["-i", tail, "-i", pieces[i].piece, "-filter_complex", `[0:v]settb=AVTB,fps=${FPS}[a];[1:v]settb=AVTB,fps=${FPS}[b];[a][b]xfade=transition=fade:duration=${(nd / FPS).toFixed(4)}:offset=0,format=yuv420p[v]`, "-map", "[v]", ...enc(pieces[i].n, mixed)]);
     pieces[i].piece = mixed; }
@@ -71,18 +91,20 @@ export async function exportScene({ dir, plan, sound, file, out, say = () => {},
   shots.forEach((s, i) => {
     const a = starts[i], d = +s.duration, cam = s.camera || {};
     if (s.title || s.title_sub) { const dark = !clipOf(s) && !(s.still && existsSync(file(s.still))) && s.title_bg === "white", fx = `{\\fad(${Math.round(Math.min(400, d * 250))},${Math.round(Math.min(400, d * 250))})${dark ? "\\c&H201C18&\\3c&HEAF1F4&" : ""}}`, low = s.title_pos === "low";
-      ev.push(`Dialogue: 2,${stamp(a)},${stamp(a + d)},${low ? "TitleLow" : "Title"},,0,0,0,,${fx}${s.title ? `{\\b1\\fs${low ? 70 : 88}}${assText(s.title)}` : ""}${s.title && s.title_sub ? "\\N" : ""}${s.title_sub ? `{\\b0\\fs${low ? 34 : 40}}${assText(s.title_sub)}` : ""}`); }
+      ev.push(`Dialogue: 2,${stamp(a)},${stamp(a + d)},${low ? "TitleLow" : "Title"},,0,0,0,,${fx}${s.title ? `{\\b1\\fs${Math.round((low ? 70 : 88) * tk)}}${assText(s.title)}` : ""}${s.title && s.title_sub ? "\\N" : ""}${s.title_sub ? `{\\b0\\fs${Math.round((low ? 34 : 40) * tk)}}${assText(s.title_sub)}` : ""}`); }
     else if (!clipOf(s) && !(s.still && existsSync(file(s.still)))) { ev.push(`Dialogue: 0,${stamp(a)},${stamp(a + d)},CardHead,,0,0,0,,${assText(cam.framing || "Shot " + s.shot_id)}`); if (s.action) ev.push(`Dialogue: 0,${stamp(a)},${stamp(a + d)},CardText,,0,0,0,,${assText(s.action)}`); }
     const ls = subtitles ? (s.lines || []).map(lineOf).filter(Boolean) : []; if (!ls.length) return;
     const w = ls.map((l) => Math.max(1, String(l.text).split(/\s+/).length)), sum = w.reduce((x, y) => x + y, 0); let acc = 0;
     ls.forEach((l, j) => { const from = a + (acc / sum) * d; acc += w[j]; const to = a + (acc / sum) * d;
       ev.push(`Dialogue: 1,${stamp(from)},${stamp(to)},${l.mouth === "off" ? "SubOff" : "Sub"},,0,0,0,,${l.speaker ? `{\\c&H8AD9FF&}${assText(l.speaker)}:{\\c&HFFFFFF&} ` : ""}${assText(l.text)}`); });
   });
-  const style = (name, size, colour, bold, italic, align, mv) => `Style: ${name},DejaVu Sans,${size},${colour},&H000000FF,&H00000000,&H96000000,${bold},${italic},0,0,100,100,0,0,1,2.2,1,${align},90,90,${mv},1`;
-  await writeFile(join(work, "words.ass"), ["[Script Info]", "ScriptType: v4.00+", "PlayResX: 1280", "PlayResY: 720", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+  // the words are laid out on a page of the picture's own shape (720 on its short side), so they wrap inside a narrow picture; titles are set smaller there
+  const PX = shape === "16:9" ? 1280 : 720, PY = shape === "9:16" ? 1280 : 720, side = cut ? 36 : 90, up = shape === "9:16" ? 110 : 0; // upright: the words sit clear of a phone's own buttons
+  const style = (name, size, colour, bold, italic, align, mv) => `Style: ${name},DejaVu Sans,${size},${colour},&H000000FF,&H00000000,&H96000000,${bold},${italic},0,0,100,100,0,0,1,2.2,1,${align},${side},${side},${mv},1`;
+  await writeFile(join(work, "words.ass"), ["[Script Info]", "ScriptType: v4.00+", "PlayResX: " + PX, "PlayResY: " + PY, "WrapStyle: 0", "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    style("Sub", 36, "&H00FFFFFF", -1, 0, 2, 40), style("SubOff", 36, "&H00FFFFFF", -1, -1, 2, 40), style("CardHead", 34, "&H00FFFFFF", -1, 0, 8, 90), style("CardText", 28, "&H00D6CEC9", 0, 0, 8, 190),
-    style("Title", 88, "&H00FFFFFF", 0, 0, 5, 0), style("TitleLow", 70, "&H00FFFFFF", 0, 0, 2, 70), "",
+    style("Sub", 36, "&H00FFFFFF", -1, 0, 2, 40 + up), style("SubOff", 36, "&H00FFFFFF", -1, -1, 2, 40 + up), style("CardHead", 34, "&H00FFFFFF", -1, 0, 8, 90), style("CardText", 28, "&H00D6CEC9", 0, 0, 8, 190),
+    style("Title", 88, "&H00FFFFFF", 0, 0, 5, 0), style("TitleLow", 70, "&H00FFFFFF", 0, 0, 2, 70 + up), "",
     "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text", ...ev, ""].join("\n"));
   // 3. the sound: every clip that would be heard, at its place, its layer's and its own loudness, with its fades
   const m = {}; shots.forEach((s, i) => { m[s.shot_id] = starts[i]; });
@@ -105,5 +127,5 @@ export async function exportScene({ dir, plan, sound, file, out, say = () => {},
   await run(["-f", "concat", "-safe", "0", "-i", join(work, "list.txt"), ...ins, "-filter_complex", `[0:v]${gradeFilter(grade)}ass='${ass}'[vout];${mix}`, "-map", "[vout]", "-map", "[aout]", "-t", total.toFixed(3),
     "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-r", String(FPS), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out]);
   await rm(work, { recursive: true, force: true });
-  return { seconds: total, shots: shots.length, clips: n };
+  return { seconds: total, shots: shots.length, clips: n, shape, size: [W, H], twos: !!twos };
 }

@@ -16,7 +16,7 @@
     kalam:     { label: "Kalam",        family: "Kalam, 'Comic Sans MS', cursive",        w: 700, b: 700 },
   };
 
-  // The 10 balloon types from the akirao3wq study (SFX is drawn in the art, so it is not typeset here).
+  // The 10 balloon types (SFX is drawn in the art, so it is not typeset here).
   const KINDS = {
     speech:  { label: "Speech",  hint: "Normal talking",              font: "playpen",   size: 30, floor: 28, lh: 1.2,  px: 20, py: 15, width: 0.27, shape: "oval" },
     shout:   { label: "Shout",   hint: "Loud: spiky burst",           font: "bangers",   size: 50, floor: 36, lh: 1.08, px: 22, py: 16, width: 0.34, shape: "burst", upper: true },
@@ -237,6 +237,8 @@
 
   function pageNumberSvg(page) {
     if (!page.number) return "";
+    // a picture that runs to the foot of the page (a full-page panel with no border) carries no page number: it would sit on the art
+    if (page.layout && layoutGeom(page.layout).cells.some((c) => c.panel.type === "bleed" && c.bbox[3] >= H - 1 && c.bbox[0] < 500 && c.bbox[2] > 500)) return "";
     return `<text x="500" y="${H - 12}" text-anchor="middle" font-family="${esc(FONTS.vollkorn.family)}" font-size="22" font-weight="500" fill="#333">${esc(page.number)}</text>`;
   }
 
@@ -342,6 +344,18 @@
 
   const validShape = (s) => Array.isArray(s) && s.length >= 3 && s.length <= 64 && s.every((p) => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]));
   const sh3 = (v) => Math.round(v * 1000) / 1000;
+  /** Does this outline cross itself (two of its edges that are not neighbours cut each other)? Such a shape fills oddly and its border doubles back. */
+  function crossesItself(poly) {
+    const n = (poly || []).length; if (n < 4) return false;
+    const side = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue; // the last edge meets the first at a corner
+      const a = poly[i], b = poly[(i + 1) % n], c = poly[j], d = poly[(j + 1) % n];
+      const d1 = side(a, b, c), d2 = side(a, b, d), d3 = side(c, d, a), d4 = side(c, d, b);
+      if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+    }
+    return false;
+  }
   /** Ready-made shapes, as shares of the panel's box. Each is the same every time (nothing random), so a page looks the same on every screen. */
   const SHAPES = {
     slant: { label: "Slanted", make: () => [[0.1, 0], [1, 0], [0.9, 1], [0, 1]] },
@@ -423,9 +437,21 @@
   }
 
   /** Face zones (page fractions). Composed pages take them from each panel's art: lib = {src: {size, protect}}. */
+  /** Where each break-out's figure stands, in page u: the middle of its box (the cut-out figure is fitted inside the box, so the
+   *  outer rim is mostly empty). One not drawn yet counts too: its place is already chosen. Balloons keep off these. */
+  function breakoutZones(page) {
+    const out = [];
+    for (const b of (page.layout && page.layout.breakouts) || []) {
+      if (!b || !Array.isArray(b.box)) continue;
+      const w = b.box[2] - b.box[0], h = b.box[3] - b.box[1];
+      out.push([(b.box[0] + w * 0.12) * W, (b.box[1] + h * 0.05) * H, (b.box[2] - w * 0.12) * W, (b.box[3] - h * 0.05) * H]);
+    }
+    return out;
+  }
   function protectBoxes(page, lib) {
     if (!page.layout) return page.protect || [];
     const out = [];
+    for (const z of breakoutZones(page)) out.push([z[0] / W, z[1] / H, z[2] / W, z[3] / H]); // a break-out is key art: the Letterer and the checks keep balloons off it
     for (const c of allPanels(page.layout)) if (!c.panel.image) for (const hd of boardHeads(c)) out.push([hd.box[0] / W, hd.box[1] / H, hd.box[2] / W, hd.box[3] / H]);
     for (const c of allPanels(page.layout)) {
       const art = c.panel.image && lib[c.panel.image];
@@ -500,7 +526,7 @@
    * Keeps balloons inside their panel, off faces and off each other, near and above the speaker, in reading order,
    * and aims each tail at the speaker's head. Lines marked join become one joined balloon with a single tail. */
   function autoPlace(page, spec, lib, measureText) {
-    const cells = allPanels(page.layout), faces = faceZones(page, lib);
+    const cells = allPanels(page.layout), faces = faceZones(page, lib), figures = breakoutZones(page);
     const placed = [], items = [];
     const overlap = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
     const inPoly = (poly, x, y) => {
@@ -570,6 +596,7 @@
           const tr = [cx - L.tw / 2 - 10, cy - L.th / 2 - 8, cx + L.tw / 2 + 10, cy + L.th / 2 + 8];
           let cost = 900 * out, ovB = 0, ovT = 0, ovF = 0;
           for (const f of mine) { const c = overlap(r, core(f.box)) / area; ovF += c; cost += 9000 * c + 1500 * overlap(r, f.box) / area; }
+          for (const z of figures) { const c = overlap(r, z) / area; ovF += c; cost += 9000 * c; } // a break-out lies over the panels: a balloon under or over it is lost
           placed.forEach((q, qi) => {
             if (chained && qi === placed.length - 1) { const o = overlap(tr, q.text) / area; ovT += o; cost += 20000 * o; } // joined balloons may touch; their words never
             else { const o = overlap(r, q.rect) / area; ovB += o; cost += 14000 * o; }
@@ -668,8 +695,36 @@
       placed.push({ cx: best.cx, cy: best.cy, ox: best.ox, oy: best.oy, rect: best.rect, text: best.text });
       items.push(item);
     }
+    // A sound effect the storyboard asks for (panel.board.sfx): huge letters across the picture, no balloon. Sized to about
+    // half its panel's width, and put where it covers the least of the faces, the balloons and the figures that stand above the borders.
+    cells.forEach((cell, ci) => {
+      const word = sfxWord((cell.panel.board || {}).sfx); if (!word || (cell.panel.inart && cell.panel.inart.sfx)) return; // the person had the Artist draw the sound into the picture instead
+      const [bx0, by0, bx1, by1] = cell.bbox, bw = bx1 - bx0, bh = by1 - by0;
+      const item = { kind: "sfx", speaker: "", text: word, at: [0.5, 0.5], panel: cell.panel.id, from: "board" };
+      let L = measure(item, spec, measureText), [ox, oy] = outer(L);
+      const k = Math.max(0.35, Math.min(3, Math.min(bw * 0.55 / (2 * ox), bh * 0.3 / (2 * oy)))); // letters about half the panel wide, never taller than a third of it
+      if (Math.abs(k - 1) > 0.05) { item.size = Math.round(k * 100) / 100; L = measure(item, spec, measureText); [ox, oy] = outer(L); }
+      let best = null;
+      for (let gy = 0; gy <= 6; gy++) for (let gx = 0; gx <= 6; gx++) {
+        const cx = bx0 + ox + 10 + (bw - 2 * ox - 20) * gx / 6, cy = by0 + oy + 10 + (bh - 2 * oy - 20) * gy / 6, r = [cx - ox, cy - oy, cx + ox, cy + oy];
+        if (!inPoly(cell.drawPoly || cell.poly, cx, cy)) continue;
+        let cost = 0;
+        for (const f of faces) cost += overlap(r, f.box) * 6;
+        for (const q of placed) cost += overlap(r, q.rect) * 4;
+        for (const z of figures) cost += overlap(r, z) * 2;
+        cost += (Math.abs(gy - 3) < 2 && Math.abs(gx - 3) < 2 ? 0.02 : 0) * 4 * ox * oy; // a little off the middle, where the picture's subject usually is
+        cost += gy * 1e-3 + gx * 1e-4; // otherwise high in the panel
+        if (!best || cost < best.cost) best = { cost, cx, cy, r };
+      }
+      if (!best) best = { cx: (bx0 + bx1) / 2, cy: by0 + bh * 0.25, r: [0, 0, 0, 0] };
+      item.at = [Math.round(best.cx / W * 1000) / 1000, Math.round(best.cy / H * 1000) / 1000];
+      placed.push({ cx: best.cx, cy: best.cy, ox, oy, rect: best.r, text: best.r });
+      items.push(item);
+    });
     return items;
   }
+  /** A sound effect as the storyboard may ask for it: a word or two, at most 24 letters, in capitals. "" when there is none. */
+  function sfxWord(v) { const t = String(v == null ? "" : v).replace(/[*_<>]/g, "").replace(/\s+/g, " ").trim().toUpperCase(); return t && t.split(" ").length <= 3 ? t.slice(0, 24) : ""; }
 
   const BLUE = "#4f7fe0", INKG = "#5b6370";
   function wrapApprox(text, maxW, size) {
@@ -735,11 +790,20 @@
     const same = t.of === p.image && c.bbox.every((v, i) => Math.round(v * k) === t.box[i]) && Math.abs(f[0] - tf[0]) < 1e-6 && Math.abs(f[1] - tf[1]) < 1e-6 && Math.abs((p.zoom || 1) - (t.zoom || 1)) < 1e-6;
     return same ? "toned" : "stale";
   }
+  /** The same for a break-out: breakout.toned = { src, box, px, of, flip, layers, ... }. Moved, resized, flipped or drawn again = "stale". */
+  function breakoutTone(b) {
+    const t = b && b.toned; if (!t || !b.image || !t.src || !Array.isArray(t.box) || !Array.isArray(b.box)) return "";
+    const k = (t.px || 2048) / W, box = [b.box[0] * W, b.box[1] * H, b.box[2] * W, b.box[3] * H];
+    return t.of === b.image && !!t.flip === !!b.flip && box.every((v, i) => Math.round(v * k) === t.box[i]) ? "toned" : "stale";
+  }
+  /** And for a page that is one whole picture (no panels): page.toned = { src, of, px, ... }. -> the picture to show: the toned one while it is still of this picture. */
+  function pageTone(page) { const t = page && page.toned; return !t || !page.art || !t.src ? "" : t.of === page.art ? "toned" : "stale"; }
+  function pageArt(page) { return pageTone(page) === "toned" ? page.toned.src : page.art; }
   /** Every picture file a page shows (panel art or its toned picture, break-outs), for anything that must load them first. */
   function pictures(page) {
-    const out = new Set(); if (!page.layout) { if (page.art) out.add(page.art); return [...out]; }
+    const out = new Set(); if (!page.layout) { if (page.art) out.add(pageArt(page)); return [...out]; }
     for (const c of allPanels(page.layout)) if (c.panel.image) out.add(toneState(c) === "toned" ? c.panel.toned.src : c.panel.image);
-    for (const b of page.layout.breakouts || []) if (b && b.image) out.add(b.image);
+    for (const b of page.layout.breakouts || []) if (b && b.image) out.add(breakoutTone(b) === "toned" ? b.toned.src : b.image);
     return [...out];
   }
   /** Break-outs: figures drawn as their own cut-out pictures, standing above the panel borders (and under the lettering).
@@ -748,6 +812,11 @@
     let out = "";
     for (const b of (page.layout && page.layout.breakouts) || []) {
       if (!b || !b.image || !Array.isArray(b.box)) continue;
+      if (breakoutTone(b) === "toned") { // the Toner's picture of this figure: made in its place at the final size (already turned round when flipped), placed dot for dot
+        const t = b.toned, k = (t.px || 2048) / W;
+        out += `<image href="${esc(href(t.src))}" x="${t.box[0] / k}" y="${t.box[1] / k}" width="${(t.box[2] - t.box[0]) / k}" height="${(t.box[3] - t.box[1]) / k}" preserveAspectRatio="none"/>`;
+        continue;
+      }
       const x = b.box[0] * W, y = b.box[1] * H, w = (b.box[2] - b.box[0]) * W, h = (b.box[3] - b.box[1]) * H;
       out += `<image href="${esc(href(b.image))}" x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" preserveAspectRatio="xMidYMid meet"${b.flip ? ` transform="translate(${r1(2 * x + w)} 0) scale(-1 1)"` : ""}/>`;
     }
@@ -766,6 +835,16 @@
       if (st === "stale") add("warn", `Panel ${n + 1} has changed since it was toned (its picture, its place or its crop), so its plain picture is showing. Tone the page again.`, -1);
       if (st === "toned" && c.panel.toned.baked) add("warn", `Panel ${n + 1}: dots are already drawn into its picture, under the Toner's dots. Two sets of dots can clash (moire). Draw it again with flat greys.`, -1);
     });
+    if (page.layout) allPanels(page.layout).forEach((c, n) => { // a free shape whose outline crosses itself
+      if (validShape(c.panel.shape) && crossesItself(c.panel.shape)) add("warn", `Panel ${n + 1}'s shape crosses itself: two of its edges cut each other, so part of the picture is lost and the border doubles back. In Layout, choose the panel, Edit corners, and drag a corner until no edges cross (or pick a ready-made shape).`, -1);
+    });
+    ((page.layout && page.layout.breakouts) || []).forEach((b, n) => { // and on its break-outs
+      const st = breakoutTone(b), near = (page.layout ? allPanels(page.layout) : []).some((c) => toneState(c) === "toned");
+      if (st === "stale") add("warn", `Break-out ${n + 1} has changed since it was toned (moved, resized, flipped or drawn again), so its plain picture is showing. Tone the page again.`, -1);
+      else if (!st && b && b.image && near) add("warn", `Break-out ${n + 1} is not toned and the panels of this page are: plain grey beside dots. Tone the page again.`, -1);
+      if (st === "toned" && b.toned.baked) add("warn", `Break-out ${n + 1}: dots are already drawn into its picture, under the Toner's dots. Two sets of dots can clash (moire). Draw it again with flat greys.`, -1);
+    });
+    if (!page.layout && pageTone(page) === "stale") add("warn", "This page's picture has changed since it was toned, so the plain picture is showing. Tone the page again.", -1);
     Ls.forEach((L, i) => {
       const text = plain(L.item.text);
       if (L.size < L.st.floor - 0.01) add("error", `Text is ${Math.round(L.size)}u, below the ${L.st.floor}u phone-size floor. Split the line or widen the balloon.`, i);
@@ -821,5 +900,5 @@
   }
 
   g.PageRender = { W, H, MARGIN, GUTTER, FONTS, KINDS, TAIL_KINDS, PANEL_TYPES, measure, outer, letteringSvg, pageNumberSvg, check, plain, esc, styleFor,
-    layoutBoxes, layoutGeom, allPanels, isRtl, panelsFrac, cropWindow, artMap, layoutSvg, protectBoxes, faceZones, autoPlace, planFor, boardHeads, bridgeSpot, breakoutsSvg, SHAPES, validShape, toneState, pictures };
+    layoutBoxes, layoutGeom, allPanels, isRtl, panelsFrac, cropWindow, artMap, layoutSvg, protectBoxes, faceZones, autoPlace, planFor, boardHeads, bridgeSpot, breakoutsSvg, breakoutZones, SHAPES, validShape, toneState, breakoutTone, pageTone, pageArt, pictures, sfxWord, crossesItself };
 })(typeof window !== "undefined" ? window : globalThis);

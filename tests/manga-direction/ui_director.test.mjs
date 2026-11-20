@@ -36,6 +36,9 @@ try {
   ok(await page.inputValue("#pjob") === "insert" && await page.getAttribute('#pweight [data-pw="1"]', "aria-pressed") === "true", "the panel's job and weight show (insert, 1)");
   await page.selectOption("#pjob", "big"); await page.click('#pweight [data-pw="5"]');
   ok(await page.getAttribute('#pweight [data-pw="5"]', "aria-pressed") === "true" && /biggest panel/i.test(await page.textContent("#pjobHint")), "job and weight change, with the job's hint");
+  ok(await page.inputValue("#ptension") === "" && /Tense, danger or fear/.test(await page.textContent("#ptensionHint")), "no tension on an ordinary panel");
+  await page.selectOption("#ptension", "danger");
+  ok(/steps back and tilts/.test(await page.textContent("#ptensionHint")), "a tension shows its hint");
   await page.click('#modeTabs [data-mode="letter"]');
   ok(/carries the most weight/.test(await page.textContent("#checks")), "the page's check list says the heaviest panel is not the biggest");
   await page.click('#modeTabs [data-mode="layout"]');

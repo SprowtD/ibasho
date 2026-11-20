@@ -1,4 +1,6 @@
 [
+{"code":"L1-01","name":"1 panel, the whole page inside the margins","rows":[{"h":1,"panels":[{"w":1,"type":"framed"}]}]},
+{"code":"L1-02","name":"1 panel, the whole page to its edges, no border","rows":[{"h":1,"panels":[{"w":1,"type":"bleed"}]}]},
 {"code":"L2-03","name":"2 panels","rows":[{"h":0.395,"panels":[{"w":0.859}]},{"h":0.395,"panels":[{"w":0.859}]}]},
 {"code":"L2-07","name":"2 panels","rows":[{"h":0.48,"panels":[{"w":0.9}]},{"h":0.36,"panels":[{"w":0.9}]}]},
 {"code":"L2-08","name":"2 panels","rows":[{"h":0.92,"panels":[{"w":0.58},{"w":0.28}]}]},

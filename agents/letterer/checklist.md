@@ -1,4 +1,4 @@
-# Letterer checklist (from the akirao3wq study of balloon types)
+# Letterer checklist
 
 1. Each balloon type means one thing: speech oval; shout = spiky burst, may break the panel border; whisper = small dashed balloon, line often starts with "…"; thought = cloud + bubble trail; caption = top-corner box for setup/time; ambient = no balloon, thin hand text (breaths, glances, silence); crowd = small side balloon; phone = rounded box for screen text.
 2. Each character has a voice on paper (set once in `voices`): e.g. a quiet character gets small, short, "…"-led lines.
@@ -10,3 +10,5 @@
 8. Clean and flat: white fill, black outline, no shadows or glow.
 9. Big SFX belong in the art, never typeset.
 Editor checks (render.js `check`) must show no "Fix" items before a page goes to the human.
+10. A tiny reaction ("Oh.", "Mm.", "Huh?", "…") is not a balloon: letter it as floating hand-drawn text (ambient) near the face. It reads lighter, and the balloons left are the lines that matter.
+11. A chapter where things happen has sound effects. One drawn sound on the panel where the thing happens (a door, a step, a hit); none on talk or reaction panels.

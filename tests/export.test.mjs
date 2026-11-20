@@ -65,3 +65,22 @@ test("asked for something that is not there: a plain answer, and nothing left be
   assert.equal((await fetch(`${app.base}/api/export-file?p=..%2F..&format=pdf`)).status, 404);
   assert.deepEqual(readdirSync(join(app.saved, "exports")), [ID]); // no half-made download files
 });
+test("Print PDF: the cut page of the chosen paper, 3 mm of bleed, trim marks, the whole page fitted to the paper's height", async () => {
+  const MM = 72 / 25.4, f2 = (v) => v.toFixed(2);
+  for (const [paper, tw, th] of [["b5", 182, 257], ["a5", 148, 210], ["us", 168.3, 260.4]]) {
+    const { r, buf, file } = await get(`format=print&paper=${paper}&pages=1,2&rtl=1`);
+    assert.equal(r.status, 200); assert.equal(file, `${ID}-print-${paper}.pdf`);
+    const s = buf.toString("latin1"); assert.ok(s.startsWith("%PDF-1.4") && s.trimEnd().endsWith("%%EOF")); assert.equal((s.match(/\/Type \/Page /g) || []).length, 2);
+    const boxes = Object.fromEntries([...s.matchAll(/\/(MediaBox|BleedBox|TrimBox) \[([\d. ]+)\]/g)].slice(0, 3).map((m) => [m[1], m[2].split(" ").map(Number)]));
+    const T = boxes.TrimBox, B = boxes.BleedBox, M = boxes.MediaBox;
+    assert.ok(Math.abs(T[2] - T[0] - tw * MM) < 0.02 && Math.abs(T[3] - T[1] - th * MM) < 0.02, paper + ": the cut page is the paper's size");
+    assert.ok([0, 1].every((i) => Math.abs(T[i] - B[i] - 3 * MM) < 0.02) && [2, 3].every((i) => Math.abs(B[i] - T[i] - 3 * MM) < 0.02), "3 mm of bleed all round");
+    assert.ok(B[0] > 0 && B[1] > 0 && B[2] < M[2] && B[3] < M[3], "room outside the bleed for the trim marks");
+    const [, pw, ph, px, py] = /q ([\d.]+) 0 0 ([\d.]+) ([\d.]+) ([\d.]+) cm \/Im0 Do Q/.exec(s).map(Number);
+    const tall = Math.abs(ph - (th + 6) * MM) < 0.02, wide = Math.abs(pw - (tw + 6) * MM) < 0.02; // as tall as the bleed, or (a squat paper like the US comic) as wide as it
+    assert.ok((tall || wide) && pw <= (tw + 6) * MM + 0.02 && ph <= (th + 6) * MM + 0.02 && Math.abs(pw / ph - 2048 / 3072) < 0.001, paper + ": the whole picture, in its own shape, fills the bleed one way and stays inside it the other");
+    assert.ok(Math.abs(px + pw / 2 - (T[0] + T[2]) / 2) < 0.02 && Math.abs(py + ph / 2 - (T[1] + T[3]) / 2) < 0.02, "centred on the cut page");
+    assert.equal((s.match(/ l S\n/g) || []).length, 16, "eight trim marks on each of the two sheets"); assert.match(s, /\/Direction \/R2L/); assert.match(s, /\/Width 2048 \/Height 3072/);
+  }
+  assert.equal((await get("format=print&paper=nonsense&pages=1")).file, `${ID}-print-b5.pdf`, "an unknown paper is B5");
+});

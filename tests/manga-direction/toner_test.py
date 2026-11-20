@@ -165,6 +165,37 @@ def main():
     ok([r["id"] for r in again] == ["a", "b"] and again[0]["flat"] == res[0]["flat"] and again[1]["flat"] != res[1]["flat"], "toning one panel again leaves the other as it was")
     whole = toner.tone_page(proj, "page-x", outp, saved, by_id=True)
     ok(whole[0]["strokes"] == 1, "toning the page again keeps what was scraped by hand")
+    # ---- a solid black shape drawn as charcoal (its darkness wanders either side of "black") stays one solid shape: no white holes (a real picture, 20 Nov 2026)
+    rng = np.random.default_rng(3); ch = np.full((600, 900), 1.0, dtype=np.float32); yy, xx = np.mgrid[0:600, 0:900]
+    disc = (xx - 300) ** 2 + (yy - 300) ** 2 < 170 ** 2
+    blot = toner._arr(toner._img(rng.random((600, 900)).astype(np.float32)).filter(ImageFilter.GaussianBlur(14)))
+    ch[disc] = (0.17 + 0.09 * (blot - blot[disc].min()) / (np.ptp(blot[disc]) + 1e-9))[disc]  # 0.17 to 0.26, in soft patches
+    ch[(xx > 560) & (xx < 840) & (yy > 150) & (yy < 450)] = 0.30  # beside it, a dark GREY area with no black in it
+    toner._img(ch).save(tmp / "charcoal.png"); dch = toner.tone_panel(tmp / "charcoal.png", tmp / "charcoal", None, "panel 9", st)
+    fl = 1 - toner._arr(toner.flatten_panel(tmp / "charcoal")[0]); inner = (xx - 300) ** 2 + (yy - 300) ** 2 < 150 ** 2
+    ok(fl[inner].min() > 0.6 and fl[inner].mean() > 0.72, "a charcoal-black shape stays solid, with no white holes: darkest paper inside it %.2f, mean ink %.2f" % (1 - fl[inner].min(), fl[inner].mean()))
+    gz = fl[180:420, 590:810]; ok(any("60%" in ly["name"] for ly in dch["layers"]) and ((gz > 0.9).mean() > 0.3 and (gz < 0.1).mean() > 0.1), "a dark grey area beside it, with no black in it, is still tone (dots): %s" % [ly["name"] for ly in dch["layers"]])
+    # ---- the measured moire test on a finished page: a second set of dots over the first is found; clean tone, edges, pen hatching and a smaller copy are not
+    bx = (0, 0, 1024, 1024); pic = lambda a: toner._img(1 - a); one = toner.dots(bx, 0.3, st)
+    m = toner.moire(pic(one)); ok(not m["moire"] and m["strength"] < 0.12 and m["tiles"] == 9, "moire test, clean dots: none (%s)" % m["strength"])
+    grad = np.tile(np.linspace(0.05, 0.6, 1024, dtype=np.float32), (1024, 1))
+    ok(not toner.moire(pic(toner.dots(bx, grad, st)))["moire"], "moire test, a shade from light to dark: none")
+    two = np.where(np.arange(1024)[None, :] >= 512, toner.dots(bx, 0.4, st), toner.dots(bx, 0.2, st))
+    ok(not toner.moire(pic(two))["moire"], "moire test, two tones side by side on one grid: none")
+    busy = pic(one).copy(); d = ImageDraw.Draw(busy); d.ellipse([200, 200, 800, 800], outline=0, width=8); d.rectangle([100, 500, 600, 900], fill=255, outline=0, width=6)
+    for i in range(0, 1024, 37):
+        d.line([(i, 0), (i + 300, 1024)], fill=0, width=3)
+    ok(not toner.moire(busy)["moire"], "moire test, pen hatching, an outline and a white shape over tone: none")
+    ok(not toner.moire(pic(one).resize((683, 683), Image.LANCZOS))["moire"], "moire test, the page at the smaller export size: none")
+    for label, over in (("70 lines over 60", {"lines": 70}), ("the same dots turned 7 degrees", {"angle": 52})):
+        st2 = toner.settings(None, **over); m = toner.moire(pic(np.maximum(one, toner.dots(bx, 0.2, st2))))
+        ok(m["moire"] and m["strength"] >= 0.3 and m["every_px"] and m["at"], "moire test, %s: found, a pattern every %s px (%s)" % (label, m["every_px"], m["strength"]))
+    from PIL import ImageFont
+    words = Image.new("L", (1024, 1024), 255); dw = ImageDraw.Draw(words); words.paste(pic(one).crop((0, 0, 300, 1024)), (0, 0))
+    for row in range(12):
+        dw.text((340, 30 + row * 80), "MEDIUM LOW ANGLE HHHHHH " * 2, fill=40, font=ImageFont.load_default(size=44) if hasattr(ImageFont, "load_default") else None)
+    m = toner.moire(words); ok(not m["moire"], "moire test, even rows of lettering beside a toned strip: none (%s)" % m["strength"])
+    m = toner.moire(tmp / "panel-flat.png"); ok(not m["moire"] and m["tiles"] > 0, "moire test, the panel toned above: none (%s over %d places)" % (m["strength"], m["tiles"]))
     print(("FAILED" if failed else "ok") + "  toner, first part: %d passed" % passed + (", %d failed" % failed if failed else ""))
     if keep:
         print("  pictures kept in", tmp)

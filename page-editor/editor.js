@@ -78,23 +78,63 @@
   const tonerOn = () => !!(bible && bible.tone_by === "toner" && !bible.colour);
   const toneBusy = (pg) => { const j = jobs["tone:" + (pg || page()).id]; return !!j && (j.status === "waiting" || j.status === "drawing"); };
   const cellOf = (id, p = page()) => (p.layout ? R.allPanels(p.layout).find((c) => c.panel.id === id) : null);
+  /** Has this page a picture the Toner can work on: a drawn panel, a drawn break-out, or the page itself when it is one whole picture? */
+  const canTone = (p) => (p.layout ? R.allPanels(p.layout).some((c) => c.panel.image) || (p.layout.breakouts || []).some((b) => b.image) : !!p.art);
   async function tonePages(list, only) {
     if (!canDraw()) return setStatus("The Toner needs Ibasho running on your computer.", "error");
-    list = list.filter((p) => p.layout && R.allPanels(p.layout).some((c) => c.panel.image)); if (!list.length) return setStatus("There is no drawn panel to tone yet.", "error");
+    list = list.filter(canTone); if (!list.length) return setStatus("There is no drawn panel to tone yet.", "error");
     clearTimeout(saveTimer); await save(); // the Toner reads the page as saved
     let n = 0;
     for (const p of list) { try { const r = await fetch(`/api/tone?p=${encodeURIComponent(proj.id)}&page=${encodeURIComponent(p.id)}${only ? "&panel=" + encodeURIComponent(only) : ""}`, { method: "POST" }); if (r.ok) { const j = await r.json(); jobs[j.panel] = Object.assign(j, { now: Date.now() }); n++; } } catch (e) { /* counted below */ } }
     pollJobs(); render();
     setStatus(n ? `The Toner is at work on ${only ? "the panel" : n === 1 ? "the page" : n + " pages"}: under a minute a page. It shows by itself when it is done.` : "The Toner could not start.", n ? "ok" : "error");
   }
+  // "Tone a new picture by itself" (Series, off unless turned on): a page a picture has just landed on is toned as soon as the Toner is free for it
+  const toneDue = new Set();
+  const toneAuto = () => tonerOn() && !!bible.tone_auto && canDraw() && store.kind === "local" && proj.own !== false;
+  function toneWhenFree(pageIds) {
+    if (!toneAuto()) { toneDue.clear(); return; }
+    for (const id of pageIds || []) toneDue.add(id);
+    const ready = [...toneDue].map((id) => spec.pages.find((p) => p.id === id)).filter((p) => p && canTone(p) && !toneBusy(p));
+    for (const id of [...toneDue]) { const p = spec.pages.find((q) => q.id === id); if (!p || !canTone(p) || !toneBusy(p)) toneDue.delete(id); } // a page still being toned stays due: it is toned again when that ends
+    if (ready.length) tonePages(ready);
+  }
+  // the chapter's dot size and kind of tone, chosen on the screen (kept in the project's toner.json)
+  let toneSet = null, toneSetFor = "";
+  const TONE_NAMES = { 40: "very big dots", 50: "big dots", 60: "standard", 70: "fine dots", 85: "very fine dots" };
+  const toneSetKey = (s) => (s.kind === "noise" ? "noise" : "dots:" + s.lines);
+  /** How the panel was toned, read from its layer names ("dots 60 lines 20%", "noise grey 20%"): "dots:60" | "noise" | "". */
+  const tonedAs = (t) => { const n = ((t && t.layers) || []).find((x) => /noise grey|dots \d+ lines/.test(x)); return !n ? "" : /noise grey/.test(n) ? "noise" : "dots:" + /dots (\d+) lines/.exec(n)[1]; };
+  async function loadToneSet() {
+    if (!canDraw() || !proj || toneSetFor === proj.id) return; toneSetFor = proj.id; toneSet = null;
+    try { const r = await fetch("/api/tone?settings&p=" + encodeURIComponent(proj.id)); if (r.ok) { toneSet = await r.json(); render(); } } catch (e) { toneSetFor = ""; }
+  }
+  function renderToneSet(t) {
+    const box = $("toneSetBox"); box.hidden = !toneSet; if (!toneSet) { loadToneSet(); return; }
+    const sel = $("toneSet"), want = toneSet.choices.map((n) => `<option value="dots:${n}">${n} lines to the inch (${TONE_NAMES[n] || "dots"})</option>`).join("") + `<option value="noise">Noise: a fine grain, no dots</option>`;
+    if (sel.dataset.made !== want) { sel.innerHTML = want; sel.dataset.made = want; }
+    sel.value = toneSetKey(toneSet); sel.disabled = toneBusy();
+    const was = tonedAs(t);
+    $("toneSetNote").textContent = was && was !== toneSetKey(toneSet) ? "This panel was toned with another choice. Tone the page again to match; tone every page from the Chapter screen so no two sizes meet." : "One choice for the whole chapter, so no two sizes of dot meet. A shade from light to dark is always dots.";
+  }
+  async function saveToneSet(v) {
+    const next = v === "noise" ? { lines: toneSet.lines, kind: "noise" } : { lines: +v.split(":")[1], kind: "dots" };
+    let r, j = {}; try { r = await fetch("/api/tone?settings&p=" + encodeURIComponent(proj.id), { method: "PUT", body: JSON.stringify(next) }); j = await r.json(); } catch (e) { render(); return setStatus("The choice could not be saved.", "error"); }
+    if (!r.ok) { render(); return setStatus(j.error || "The choice could not be saved.", "error"); }
+    toneSet = j; render();
+    setStatus(`Saved: ${j.kind === "noise" ? "noise" : j.lines + " lines to the inch"} for this chapter. Pages already toned keep what they have until they are toned again.`, "ok");
+  }
   /** What the Toner last made is put on the panels (the renderer shows it only while it still fits the panel). */
   async function takeTone() {
     if (!canDraw() || !spec) return;
     let m = null; try { const r = await fetch("/api/tone?p=" + encodeURIComponent(proj.id)); if (r.ok) m = await r.json(); } catch (e) { /* next time */ }
     if (!m) return; let n = 0;
-    for (const p of spec.pages) { const rec = m[String(p.id).replace(/[^\w-]/g, "_")]; if (!rec || !p.layout) continue;
-      for (const c of R.allPanels(p.layout)) { const t = rec.panels.find((x) => x.id === c.panel.id); if (t && JSON.stringify(c.panel.toned || null) !== JSON.stringify(t)) { const { id, ...keep } = t; if (JSON.stringify(c.panel.toned || null) !== JSON.stringify(keep)) { c.panel.toned = keep; n++; } } } }
-    if (n) { render(); snap(); setStatus(`The Toner's screentone is on ${n} panel${n === 1 ? "" : "s"}.`, "ok"); }
+    let other = 0; const put = (on, t) => { const { id, kind, ...keep } = t; if (JSON.stringify(on.toned || null) !== JSON.stringify(keep)) { on.toned = keep; n++; other++; } }; // break-outs and whole-page pictures
+    for (const p of spec.pages) { const rec = m[String(p.id).replace(/[^\w-]/g, "_")]; if (!rec) continue;
+      if (!p.layout) { const t = rec.panels.find((x) => x.kind === "page"); if (t && p.art) put(p, t); continue; } // a page that is one whole picture
+      for (const b of breakouts(p)) { const t = rec.panels.find((x) => x.kind === "breakout" && x.id === b.id); if (t) put(b, t); }
+      for (const c of R.allPanels(p.layout)) { const t = rec.panels.find((x) => !x.kind && x.id === c.panel.id); if (t && JSON.stringify(c.panel.toned || null) !== JSON.stringify(t)) { const { id, ...keep } = t; if (JSON.stringify(c.panel.toned || null) !== JSON.stringify(keep)) { c.panel.toned = keep; n++; } } } }
+    if (n) { render(); snap(); setStatus(`The Toner's screentone is on ${n} ${other ? "picture" : "panel"}${n === 1 ? "" : "s"}.`, "ok"); }
   }
   // scraping and painting back by hand: strokes drawn on the panel's flat picture, kept beside the layers, never destroying them
   const TH = { panel: null, page: null, size: [0, 0], strokes: [], tool: "soft", img: null, cur: null, dirty: false };
@@ -134,12 +174,15 @@
   const findBo = (id) => breakouts().find((b) => b.id === id) || null;
   const boJob = (b) => jobs["breakout:" + b.id];
   const boBusy = (b) => { const j = boJob(b); return !!j && (j.status === "waiting" || j.status === "drawing"); };
-  async function drawBo(b) {
+  /** Break-outs on any page that have their words but no picture, and are not being drawn. */
+  const missingBos = () => (spec ? spec.pages.flatMap((p) => breakouts(p)) : []).filter((b) => !b.image && !boBusy(b) && (b.who || b.action));
+  async function drawBo(b, quiet) {
     if (!canDraw()) return setStatus("Drawing a break-out needs Ibasho running on your computer.", "error");
     clearTimeout(saveTimer); await save();
     let r, j = {}; try { r = await fetch("/api/breakouts?p=" + encodeURIComponent(proj.id), { method: "POST", body: JSON.stringify({ id: b.id, who: b.who || "", action: b.action || "" }) }); j = await r.json(); } catch (e) { return setStatus("The break-out could not be sent to be drawn.", "error"); }
     if (!r.ok) return setStatus(j.error || "The break-out could not be drawn.", "error");
     jobs[j.panel] = Object.assign(j, { now: Date.now() }); pollJobs(); render();
+    if (quiet) return true;
     setStatus("Codex is drawing the break-out: about three minutes. It lands on the page by itself.", "ok");
   }
   /** Newly drawn break-outs are put on the page (the newest take of each). */
@@ -147,8 +190,9 @@
     if (!canDraw() || !spec || !spec.pages.some((p) => breakouts(p).length)) return;
     let m = null; try { const r = await fetch("/api/breakouts?p=" + encodeURIComponent(proj.id)); if (r.ok) m = await r.json(); } catch (e) { /* next time */ }
     if (!m) return; const no = (s) => +(/-take(\d+)\.png$/.exec(s || "") || [0, 0])[1]; let n = 0;
-    for (const p of spec.pages) for (const b of breakouts(p)) if (m[b.id] && no(m[b.id]) > no(b.image)) { b.image = m[b.id]; n++; }
-    if (n) { render(); snap(); setStatus(n === 1 ? "The break-out is drawn and on the page. Drag its dots to place it." : `${n} break-outs are drawn and on the page.`, "ok"); }
+    const on = new Set();
+    for (const p of spec.pages) for (const b of breakouts(p)) if (m[b.id] && no(m[b.id]) > no(b.image)) { b.image = m[b.id]; n++; on.add(p.id); }
+    if (n) { render(); snap(); setStatus(n === 1 ? "The break-out is drawn and on the page. Drag its dots to place it." : `${n} break-outs are drawn and on the page.`, "ok"); toneWhenFree([...on]); }
   }
   function boWords(b) { // ask who and what; false when the person backs out
     const f = b.panel && findPanel(b.panel), bd = f && f.panel.board, first = bd && bd.who && bd.who[0] ? bd.who[0].name : "";
@@ -217,7 +261,7 @@
     store = { kind: "none" };
   }
   async function loadSaved() {
-    const want = proj.id;
+    const want = proj.id; savedFor = "";
     try {
       let d = null;
       if (store.kind === "db") {
@@ -237,12 +281,13 @@
       if (d && !edited) { spec = prepare(mergeSaved(JSON.parse(JSON.stringify(d)))); const turned = syncReading(); hist = [JSON.stringify(spec)]; redo = []; drafts = {}; clampSel(); render(); if (turned) { queueSave(); setStatus(`This series reads ${READING[spec.reading][0].toLowerCase()}: ${turned} page${turned === 1 ? " was" : "s were"} turned to match.`, "ok"); return; } } // drafts made from the built pages in the first moments are stale now
       setStatus("Saved", "ok");
     } catch (e) { setStatus("Saved edits could not load. New edits still save.", "warn"); }
+    finally { if (want === proj.id) { savedFor = want; if (spec) renderDrawAll(); } }
   }
   let storeReady = null;
   async function initStore() { if (!storeReady) storeReady = detectStore(); await storeReady; await loadSaved(); loadPicModel(); registerAssistant(); loadOwnLayouts(); }
   // ---------- your own page layouts: saved on this computer, offered in every project beside the ready-made ones ----------
   let ownLayouts = [];
-  const T = () => ((spec && spec.templates) || []).concat(ownLayouts);
+  const T = () => (window.Director ? window.Director.withFullPage((spec && spec.templates) || []) : (spec && spec.templates) || []).concat(ownLayouts);
   async function loadOwnLayouts() { if (store.kind !== "local") return; try { const r = await fetch("/api/layouts"); if (r.ok) { ownLayouts = (await r.json()).layouts || []; if (spec && mode === "layout") renderLayoutPanel(); } } catch (e) { /* none */ } }
   /** The page's layout with only its build kept (tiers, shares, slants, panel types): no pictures, storyboard or ids. */
   function bareRows(rows) { return rows.map((r) => Object.assign({ h: r.h || 1 }, r.slant ? { slant: r.slant } : {}, r.strip ? { strip: true } : {}, { panels: r.panels.map((q) => Object.assign({ w: q.w || 1 }, q.slant ? { slant: q.slant } : {}, q.rows ? { rows: bareRows(q.rows) } : (q.type && q.type !== "framed" ? { type: q.type } : {}), !q.rows && q.shape ? { shape: q.shape } : {})) })); }
@@ -262,7 +307,7 @@
   function queueSave() {
     dirty = true;
     if (store.kind === "none") return;
-    setStatus("Saving…");
+    saveStatus("Saving…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 1200);
   }
@@ -289,7 +334,7 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
       }
       saveFails = 0;
-      setStatus(dirty ? "Saving…" : "Saved", dirty ? "" : "ok");
+      saveStatus(dirty ? "Saving…" : "Saved", dirty ? "" : "ok");
     } catch (e) {
       dirty = true; saveFails++;
       // pages already written are remembered, so each retry only sends what is left
@@ -297,9 +342,18 @@
       else setStatus("Could not save. Your edits are still here; change anything to try again.", "error");
     }
   }
-  function setStatus(msg, tone) { const el = $("status"); el.textContent = msg; el.dataset.tone = tone || ""; }
+  // News on the status line (what a button just did) is not wiped by the save that follows it: "Saved" waits its turn for six seconds.
+  let newsAt = 0, saveNote = null; const SAVE_WORDS = /^(Saved|Saving…)$/;
+  function setStatus(msg, tone) { const el = $("status"); el.textContent = msg; el.dataset.tone = tone || ""; clearTimeout(saveNote); if (!SAVE_WORDS.test(msg)) newsAt = Date.now(); }
+  function saveStatus(msg, tone) {
+    const wait = newsAt + 6000 - Date.now();
+    if (wait > 0 && !SAVE_WORDS.test($("status").textContent)) { clearTimeout(saveNote); saveNote = setTimeout(() => saveStatus(msg, tone), wait); return; }
+    setStatus(msg, tone);
+  }
+  let savedFor = ""; // the project whose saved edits are loaded: counts taken before that are of the built chapter, not the person's
 
   // ---------- rendering ----------
+  function renderDrawAll() { const n = missingCount(); $("drawAllBtn").hidden = !canDraw() || !n || !spec.boardAt || savedFor !== proj.id; $("drawAllBtn").textContent = `Draw the ${n} missing picture${n === 1 ? "" : "s"}`; }
   function renderChapter() {
     const res = window.Paneler ? window.Paneler.check(spec, R) : { chapter: [], pages: {} };
     const lines = (spec.script || []).filter((b) => b.type === "line").length;
@@ -334,16 +388,16 @@
     $("coverBtn").hidden = $("reboardBtn").hidden || !spec.boardAt; $("coverBtn").textContent = spec.pages.some((p) => p.cover) ? "Change the cover" : "Add a cover";
     $("chapterGrid").innerHTML = spec.pages.map((p, i) => {
       const Ls = p.text.map((it) => R.measure(it, spec, measureText));
-      const art = p.layout ? R.layoutSvg(p, (s) => BASE + s, sizes()) : `<image href="${R.esc(BASE + p.art)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`;
+      const art = p.layout ? R.layoutSvg(p, (s) => BASE + s, sizes()) : `<image href="${R.esc(BASE + R.pageArt(p))}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`;
       const iss = res.pages[p.id] || [];
       return `<button type="button" class="pg" data-open="${i}"><svg viewBox="0 0 ${W} ${H}" aria-hidden="true">${art}${R.letteringSvg(Ls)}${R.pageNumberSvg(p)}</svg>` +
         `<span class="pg-meta"><b>${R.esc(p.label || "Page " + p.number)}</b>${iss.length ? `<span class="chip warn">${iss.length}</span>` : ""}</span>` +
         (p.note ? `<span class="pg-note">${R.esc(p.note)}</span>` : "") + `</button>`;
     }).join("");
     $("letterAllBtn").hidden = !spec.pages.some((p) => p.layout && R.planFor(p).length);
-    $("exportAllBtn").hidden = store.kind !== "local";
-    $("toneAllBtn").hidden = store.kind !== "local" || !tonerOn() || !spec.pages.some((p) => p.layout && R.allPanels(p.layout).some((c) => c.panel.image));
-    { const n = missingCount(); $("drawAllBtn").hidden = !canDraw() || !n || !spec.boardAt; $("drawAllBtn").textContent = `Draw the ${n} missing picture${n === 1 ? "" : "s"}`; }
+    $("exportAllBtn").hidden = store.kind !== "local"; $("publishBtn").hidden = store.kind !== "local" || proj.own === false; $("stillsBtn").hidden = store.kind !== "local" || !homeList.some((q) => q.id === proj.id && q.own);
+    $("toneAllBtn").hidden = store.kind !== "local" || !tonerOn() || !spec.pages.some(canTone);
+    renderDrawAll();
     renderExports();
   }
 
@@ -380,6 +434,17 @@
     if (board) out.push(step("Anime", mine.length ? `${mine.length} scene${mine.length === 1 ? "" : "s"}` : "Start a scene", mine.length ? "part" : "none", `href="/anime/#/${mine.length === 1 ? "scene/" + encodeURIComponent(mine[0].id) : mine.length ? "" : "new/" + encodeURIComponent(q.id)}"`));
     return `<div class="flow">${out.join("")}</div>`;
   }
+  let homeQ = "";
+  function homeFilter() { // show only the rows whose name holds every word typed; a series heading stays while one of its chapters does
+    const words = homeQ.toLowerCase().split(/\s+/).filter(Boolean), hit = (el) => words.every((w) => (el.dataset.find || "").includes(w));
+    let n = 0, all = 0;
+    for (const grid of ["homeGrid", "bookGrid", "animeGrid", "awayGrid"]) {
+      for (const g of $(grid).querySelectorAll(".pgroup")) { const head = g.querySelector(".pgh"), whole = hit(head); let any = false; for (const r of g.querySelectorAll(".prow")) { const on = whole || hit(r); r.hidden = !on; any = any || on; r.dataset.seen = 1; all++; if (on) n++; } g.hidden = !any; }
+      for (const r of $(grid).querySelectorAll(".prow")) { if (r.dataset.seen) { delete r.dataset.seen; continue; } const on = hit(r); r.hidden = !on; all++; if (on) n++; }
+    }
+    if (words.length && $("awayGrid").querySelector(".prow:not([hidden])")) $("homeAway").open = true;
+    $("homeFindN").textContent = words.length ? (n ? `${n} of ${all}` : "Nothing by that name") : "";
+  }
   async function renderHome() {
     clearTimeout(homeTimer);
     const local = store.kind === "local";
@@ -402,7 +467,7 @@
           `<div class="flow">${step("Shot list", `${s.shots} shots · ${Math.round(s.seconds)} s`, "done", a)}${step("Plan check", s.errors ? `${s.errors} problem${s.errors === 1 ? "" : "s"}` : "Passes", s.errors ? "bad" : "done", a)}` +
           `${step("Blocking", kind === "blocking" ? "Working…" : s.blocked ? "Done" : "Not run", kind === "blocking" ? "busy" : s.blocked ? "done" : "none", a)}${step("Grey 3D animatic", kind === "previs" || kind === "render" ? "Working…" : s.previs ? "Ready to play" : "Not made", kind === "previs" || kind === "render" ? "busy" : s.previs ? "done" : "none", a)}${step("Pictures in the look", `${s.drawn || 0} of ${s.shots}`, frac(s.drawn || 0, s.shots), a)}${step("Sound", s.sound ? `${s.sound} clip${s.sound === 1 ? "" : "s"}` : "None yet", s.sound ? "part" : "none", a)}</div></div>`; }).join("");
     }
-    $("hBooksH").hidden = !books.length; $("hAnimeH").hidden = !local;
+    $("hAnimeH").hidden = !local;
     if (local && !scenes.length) $("animeGrid").innerHTML = `<p class="home-empty">No anime scenes yet. Press “New anime scene” to start one from a script or from nothing, or “Anime” on a storyboarded chapter above.</p>`;
     $("homeInfo").textContent = local ? "Every project and where it stands. Each row is one piece of work, left to right in the order it is made." : "Starting your own project works in the copy on your computer. These two are the test projects.";
     $("newProj").hidden = !local;
@@ -426,15 +491,36 @@
           (left > 0 ? `<button type="button" class="btn" data-carry="${R.esc(q.id)}" data-go="art">Draw the ${left} empty panel${left === 1 ? "" : "s"}</button>` : "") + `</div></div>`;
       }
     }
-    $("homeGrid").innerHTML = list.map((q) => {
+    // ---- Home list: series grouped, search, and what was put away (archived: only hidden here, nothing deleted) ----
+    const put = (kind, id, on) => (local ? `<button type="button" class="btn putaway" data-put="${kind}" data-id="${R.esc(id)}" data-on="${on ? 1 : 0}">${on ? "Put away" : "Bring back"}</button>` : "");
+    const ago = (iso) => { const m = (Date.now() - Date.parse(iso)) / 60000; return !iso || !(m >= 0) ? "" : m < 2 ? "worked on just now" : m < 60 ? `worked on ${Math.round(m)} min ago` : m < 1440 ? `worked on ${Math.round(m / 60)} h ago` : m < 43200 ? `worked on ${Math.round(m / 1440)} day${Math.round(m / 1440) === 1 ? "" : "s"} ago` : "worked on " + new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); };
+    const chapterRow = (q, on) => {
       const sb = q.storyboard, busy = sb && (sb.status === "waiting" || sb.status === "drawing"), id = R.esc(q.id);
       const state = !sb ? "" : busy ? `<span class="state">Storyboarding… ${sb.at ? mins(sb.now - sb.at) : "waiting its turn"}</span>` :
         sb.status === "failed" ? `<span class="state bad">Storyboard failed: ${R.esc(sb.msg || "")}</span>` : sb.status === "none" ? `<span class="state bad">Not storyboarded yet</span>` : sb.msg ? `<small>Storyboard: ${R.esc(sb.msg)}</small>` : "";
       const cover = q.cover ? `<img class="pt" src="${R.esc(q.dir + q.cover)}" alt="" loading="lazy">` : `<span class="pt">${busy ? "Reading the script" : "No art yet"}</span>`;
-      return `<div class="prow">${cover}<button type="button" class="pn" data-proj="${id}"><b>${R.esc(q.label)}${q.own === false ? '<span class="tagx">sample</span>' : ""}</b>` +
-        (q.pages != null ? `<small>${q.pages} page${q.pages === 1 ? "" : "s"} · ${q.panels} panels</small>` : "") + state + `</button>` +
-        (sb && (sb.status === "failed" || sb.status === "none") ? `<button type="button" class="btn" data-reboard="${id}">Storyboard it now</button>` : q.pages != null ? mangaFlow(q, scenes) : "") + `</div>`;
-    }).join("") || (local && !books.length ? `<p class="home-empty">Nothing here yet. Press “New project from a script” to paste a scene, or “New book from a file” to bring in a whole book.</p>` : "");
+      const when = ago(q.changed);
+      return `<div class="prow" data-find="${R.esc(String(q.label || "").toLowerCase())}">${cover}<button type="button" class="pn" data-proj="${id}"><b>${R.esc(q.label)}${q.own === false ? '<span class="tagx">sample</span>' : ""}</b>` +
+        (q.pages != null ? `<small>${q.pages} page${q.pages === 1 ? "" : "s"} · ${q.panels} panels${when ? " · " + when : ""}</small>` : "") + state + `</button><div class="pact">` +
+        (!on ? "" : sb && (sb.status === "failed" || sb.status === "none") ? `<button type="button" class="btn" data-reboard="${id}">Storyboard it now</button>` : q.pages != null ? mangaFlow(q, scenes) : "") + put("project", q.id, on) + `</div></div>`;
+    };
+    const shown = list.filter((q) => !q.archived), away = list.filter((q) => q.archived), awayBooks = books.filter((b) => b.archived);
+    const groups = []; // chapters of one series sit together under the series' name (two or more), in chapter order
+    for (const q of shown) { const key = local && q.project ? (q.own === false ? "s:" : "o:") + q.project : "one:" + q.id; let g = groups.find((x) => x.key === key); if (!g) groups.push((g = { key, name: q.project, rows: [] })); g.rows.push(q); }
+    $("homeGrid").innerHTML = groups.map((g) => {
+      if (g.rows.length < 2) return g.rows.map((q) => chapterRow(q, true)).join("");
+      const rows = g.rows.slice().sort((a, b) => (parseFloat(a.chapter) || 0) - (parseFloat(b.chapter) || 0)), sum = (k) => rows.reduce((a, q) => a + (q[k] || 0), 0);
+      return `<div class="pgroup"><div class="pgh" data-find="${R.esc(String(g.name).toLowerCase())}"><b>${R.esc(g.name)}</b><small>${rows.length} chapters · ${sum("pages")} pages · ${sum("drawn")} of ${sum("panels")} panels drawn</small></div>${rows.map((q) => chapterRow(q, true)).join("")}</div>`;
+    }).join("") || (local && !books.length && !away.length ? `<p class="home-empty">Nothing here yet. Press “New project from a script” to paste a scene, or “New book from a file” to bring in a whole book.</p>` : "");
+    for (const r of $("bookGrid").querySelectorAll(".prow")) { const b = books.find((x) => x.id === (r.querySelector("[data-book]") || {}).dataset.book); if (!b) continue; if (b.archived) { r.remove(); continue; } r.dataset.find = String(b.name || "").toLowerCase(); const fl = r.querySelector(".flow"), w = document.createElement("div"); w.className = "pact"; fl.replaceWith(w); w.appendChild(fl); w.insertAdjacentHTML("beforeend", put("book", b.id, true)); }
+    for (const r of $("animeGrid").querySelectorAll(".prow")) r.dataset.find = ((r.querySelector(".pn") || {}).textContent || "").toLowerCase();
+    $("hBooksH").hidden = !books.some((b) => !b.archived);
+    const nAway = away.length + awayBooks.length;
+    $("homeAway").hidden = !nAway; $("homeAwayN").textContent = nAway ? `Put away (${nAway})` : "";
+    $("awayGrid").innerHTML = away.map((q) => chapterRow(q, false)).join("") + awayBooks.map((b) => `<div class="prow" data-find="${R.esc(String(b.name || "").toLowerCase())}"><span class="pt">${b.chapters} chapters</span><span class="pn"><b>${R.esc(b.name)}<span class="tagx">book</span></b><small>${num(b.words)} words</small></span><div class="pact">${put("book", b.id, false)}</div></div>`).join("");
+    const total = shown.length + books.length + scenes.length + nAway;
+    $("homeFindWrap").hidden = !(local && (total > 8 || homeQ)); // search only earns its place when the list is long
+    homeFilter();
     if (local && (homeList.some((q) => q.storyboard && (q.storyboard.status === "waiting" || q.storyboard.status === "drawing")) || scenes.some((s) => s.job && s.job.status === "running"))) homeTimer = setTimeout(renderHome, 5000);
   }
   // ---------- books: a long text split into chapters ----------
@@ -582,7 +668,82 @@
       if (pid) { await fetchProjects(); loadProject(pid).catch(() => setStatus("That chapter could not load.", "error")); }
     });
   }
+  // "Start from an idea": the Writer first talks the idea through (a story plan and questions, as many rounds as the person
+  // wants), then writes the chapter script into the form from the plan. "Skip the talk" asks for the script at once. The person
+  // reads and changes the script there; only Create storyboards it.
+  let npIdea = "", npIdeaTimer = 0, npRounds = -1;
+  const ideaKeep = (id) => { npIdea = id || ""; try { if (id) localStorage.setItem("ibasho.idea", id); else localStorage.removeItem("ibasho.idea"); } catch (e) { /* kept for this visit only */ } };
+  const PLAN_FIELDS = [["hook", "npPlanHook"], ["hero", "npPlanHero"], ["aim", "npPlanAim"], ["turn", "npPlanTurn"], ["begins", "npPlanBegins"], ["ends", "npPlanEnds"]];
+  function planTotal() { const n = [...document.querySelectorAll("#npPlanActs .actPages")].reduce((t, el) => t + (parseInt(el.value, 10) || 0), 0); $("npPlanTotal").textContent = n ? `About ${n} page${n === 1 ? "" : "s"} in all.` : ""; }
+  function fillPlan(plan) {
+    plan = plan || {}; for (const [k, el] of PLAN_FIELDS) $(el).value = plan[k] || "";
+    const acts = (plan.acts && plan.acts.length ? plan.acts : [{ part: "Setup" }, { part: "Development" }, { part: "Twist" }, { part: "Ending" }]);
+    $("npPlanActs").innerHTML = acts.map((a) => `<div class="act"><input class="actPart" maxlength="40" aria-label="Part" value="${R.esc(a.part || "")}"><input class="actPages" type="number" min="1" max="40" aria-label="Pages" value="${a.pages ? +a.pages : ""}"><textarea class="actWhat" rows="2" maxlength="300" aria-label="What happens in ${R.esc(a.part || "this part")}" placeholder="What happens">${R.esc(a.what || "")}</textarea></div>`).join("");
+    planTotal();
+  }
+  function readPlan() {
+    const plan = {}; for (const [k, el] of PLAN_FIELDS) plan[k] = $(el).value.trim();
+    plan.acts = [...document.querySelectorAll("#npPlanActs .act")].map((r) => ({ part: r.querySelector(".actPart").value.trim(), pages: parseInt(r.querySelector(".actPages").value, 10) || 1, what: r.querySelector(".actWhat").value.trim() })).filter((a) => a.part || a.what);
+    return plan;
+  }
+  function paintTalk(talk) {
+    $("npTalkLog").innerHTML = (talk || []).map((t) => `<li class="${t.who === "you" ? "you" : "writer"}"><b>${t.who === "you" ? "You" : "The Writer"}</b>${R.esc(t.say || "")}` +
+      (t.questions && t.questions.length ? `<ul>${t.questions.map((q) => `<li>${R.esc(q)}</li>`).join("")}</ul>` : "") + "</li>").join("");
+    const log = $("npTalkLog"); log.scrollTop = log.scrollHeight;
+  }
+  function wireIdea() {
+    const hint = (t, bad) => { $("npIdeaHint").textContent = t; $("npIdeaHint").style.color = bad ? "var(--red)" : ""; }, go = $("npIdeaGo"), skip = $("npIdeaSkip");
+    const busy = (on) => { for (const id of ["npIdeaGo", "npIdeaSkip", "npReplyGo", "npWriteGo"]) $(id).disabled = on; };
+    const show = (j, id, fresh) => {
+      clearTimeout(npIdeaTimer);
+      const talk = j.talk || [];
+      $("npTalk").hidden = !talk.length;
+      if (talk.length) { paintTalk(talk); const rounds = talk.filter((t) => t.who === "writer").length; if (rounds !== npRounds) { npRounds = rounds; fillPlan(j.plan); } }
+      if (j.status === "waiting" || j.status === "writing") { busy(true);
+        hint(j.status === "waiting" ? "Waiting in the queue for the Writer." : j.msg || (j.step === "plan" ? "The Writer is reading your idea and thinking it through. With Codex this takes a minute or two; you can leave this page open." : "The Writer is writing the script. With Codex this takes two or three minutes; you can leave this page open."));
+        npIdeaTimer = setTimeout(() => poll(id, true), 3000); return; }
+      busy(false);
+      if (j.idea && !$("npIdea").value) $("npIdea").value = j.idea;
+      if (j.status === "talk") { ideaKeep(id); $("newProj").open = true;
+        hint("The Writer answered. Answer its questions or change the plan and send it back, as often as you like. When the plan is right, press “Write the script from this plan”.");
+        if (fresh) $("npReply").focus(); }
+      else if (j.status === "done") {
+        if (fresh || !$("npScript").value.trim()) { $("npScript").value = j.script; if (j.title && !$("npName").value && !$("npLike").value) $("npName").value = j.title; ideaKeep(id); $("newProj").open = true;
+          hint("The Writer wrote the script below. Read it and change anything you like, then press Create and storyboard. Nothing has been storyboarded or drawn."); if (fresh) $("npScript").focus(); } }
+      else if (j.status === "failed") { if (talk.length) ideaKeep(id); else ideaKeep(""); hint("The Writer did not finish: " + (j.msg || "no reason given") + (talk.length ? "" : " Press the button to try again."), true); }
+      else ideaKeep("");
+    };
+    const poll = async (id, fresh) => { try { show(await (await fetch("/api/idea?id=" + encodeURIComponent(id))).json(), id, fresh); } catch (e) { npIdeaTimer = setTimeout(() => poll(id, fresh), 5000); } };
+    const send = async (url, payload, asking) => {
+      if (!(await okToWrite())) return false;
+      busy(true); hint(asking);
+      try { const r = await fetch(url, { method: "POST", body: JSON.stringify(payload) }), j = await r.json(); if (!r.ok) throw new Error(j.error || "The Writer could not start."); ideaKeep(j.id); show(j, j.id, true); return true; }
+      catch (err) { busy(false); hint(String(err.message || err), true); return false; }
+    };
+    const start = async (skipTalk) => {
+      const idea = $("npIdea").value.trim();
+      if (idea.length < 12) return hint("Say a little more about the idea first: who it is about and what happens.", true);
+      if (skipTalk && $("npScript").value.trim() && !confirm("The script box already has text. The Writer's script will replace it. Go on?")) return;
+      npRounds = -1; $("npTalk").hidden = true; $("npTalkLog").innerHTML = ""; $("npReply").value = "";
+      await send("/api/idea", { idea, like: $("npLike").value, ...(skipTalk ? { skip: true } : {}) }, "Asking the Writer.");
+    };
+    go.addEventListener("click", () => start(false)); skip.addEventListener("click", () => start(true));
+    $("npPlanActs").addEventListener("input", planTotal);
+    $("npReplyGo").addEventListener("click", async () => {
+      if (!npIdea) return; const say = $("npReply").value.trim();
+      if (!say) { hint("Write your answer to the Writer first (a plain “yes” takes its suggestions).", true); $("npReply").focus(); return; }
+      if (await send("/api/idea/reply", { id: npIdea, say, plan: readPlan() }, "Sending your answer to the Writer.")) $("npReply").value = "";
+    });
+    $("npWriteGo").addEventListener("click", async () => {
+      if (!npIdea) return;
+      if ($("npScript").value.trim() && !confirm("The script box already has text. The Writer's script will replace it. Go on?")) return;
+      await send("/api/idea/write", { id: npIdea, plan: readPlan() }, "Asking the Writer for the script.");
+    });
+    let was = ""; try { was = localStorage.getItem("ibasho.idea") || ""; } catch (e) { /* none */ }
+    if (was) { npIdea = was; poll(was, false); } // a draft asked for before a reload: it is picked up again
+  }
   function wireHome() {
+    wireIdea();
     wireBooks();
     $("homeBtn").addEventListener("click", () => { mode = "home"; sel = -1; selP = null; inProject(false); render(); });
     $("mangaBtn").addEventListener("click", () => { if ((mode !== "home" && mode !== "book") || !spec) return; mode = spec && spec.kind === "storyboard" ? "chapter" : "letter"; inProject(true); render(); });
@@ -591,6 +752,19 @@
       const re = e.target.closest("[data-reboard]"), b = e.target.closest("[data-proj]");
       if (re) { if (!(await okToWrite())) return; await fetch("/api/storyboard?p=" + encodeURIComponent(re.dataset.reboard), { method: "POST" }); renderHome(); return; }
       if (b) openProject(b.dataset.proj, b.dataset.go).catch(() => setStatus("That project could not load.", "error"));
+    });
+    $("homeFind").addEventListener("input", (e) => { homeQ = e.target.value.trim(); homeFilter(); });
+    $("homeView").addEventListener("click", async (e) => { // Put away / Bring back: the chapter or book only leaves the Home list
+      const b = e.target.closest("[data-put]"); if (!b) return;
+      e.stopPropagation(); if (!(await okToWrite())) return;
+      const on = b.dataset.on === "1"; b.disabled = true;
+      try {
+        const r = await fetch("/api/put-away", { method: "POST", body: JSON.stringify({ kind: b.dataset.put, id: b.dataset.id, on }) }), j = await r.json();
+        if (!r.ok) throw new Error(j.error || "That did not work.");
+        setStatus(on ? "Put away. Nothing was deleted: it is under “Put away” at the bottom of Home." : "Brought back to the list.", "ok");
+        if (on) $("homeAway").open = false;
+        await renderHome();
+      } catch (err) { b.disabled = false; setStatus(String(err.message || err), "error"); }
     });
     $("npStyleBtn").addEventListener("click", async () => { const s = await pickStyle(npStyle); if (s) { npStyle = s.id; $("npStyleBtn").innerHTML = styleButton(s); } });
     $("npLike").addEventListener("change", (e) => { const o = e.target.selectedOptions[0], on = !!e.target.value; if (on) { $("npName").value = o.dataset.name; $("npChapter").value = o.dataset.next; }
@@ -602,14 +776,110 @@
       if (!(await okToWrite())) return;
       const go = $("npGo"); go.disabled = true;
       try {
-        const r = await fetch("/api/projects", { method: "POST", body: JSON.stringify({ name: $("npName").value, chapter: $("npChapter").value, script: $("npScript").value, style: npStyle, like: $("npLike").value, reading: npReading }) });
+        const r = await fetch("/api/projects", { method: "POST", body: JSON.stringify({ name: $("npName").value, chapter: $("npChapter").value, script: $("npScript").value, style: npStyle, like: $("npLike").value, reading: npReading, idea: npIdea }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || "It could not be created.");
-        $("newForm").reset(); $("newProj").open = false; paintNpReading();
+        $("newForm").reset(); $("newProj").open = false; paintNpReading(); ideaKeep(""); $("npIdeaHint").textContent = ""; $("npTalk").hidden = true; $("npTalkLog").innerHTML = ""; npRounds = -1;
         setStatus("Project created. The Paneler is storyboarding it; this takes a few minutes.", "ok");
         renderHome();
       } catch (err) { $("npHint").textContent = String(err.message || err); $("npHint").style.color = "var(--red)"; }
       go.disabled = false;
+    });
+  }
+
+  // ---------- use existing stills: an anime scene's pictures onto this chapter's panels, before anything is drawn ----------
+  // Self-contained: its own dialog (stillsDlg), its own routes (/api/stills/*, page-editor/stills.mjs). Three steps: where the stills
+  // are, the match as a sheet (accept or change each panel), then a tap on the face of each placed picture.
+  const stl = { source: null, sources: null, match: null, picks: new Map(), placed: [] };
+  const stillsApi = async (what, body) => { const r = await fetch("/api/stills/" + what, body ? { method: "POST", body: JSON.stringify(body) } : undefined), j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "That did not work."); return j; };
+  const stillsSay = (msg, bad) => { $("stillsNote").textContent = msg || ""; $("stillsNote").style.color = bad ? "var(--red)" : ""; };
+  async function openStills() {
+    stl.source = null; stl.match = null; stl.picks = new Map(); stl.placed = [];
+    if (!$("stillsDlg").open) $("stillsDlg").showModal();
+    stillsSay("Looking for stills…"); $("stillsBody").innerHTML = ""; $("stillsGo").hidden = true; $("stillsBack").hidden = true;
+    try { stl.sources = await stillsApi("sources"); stillsSources(); } catch (e) { stillsSay(String(e.message || e), true); }
+  }
+  function stillsSources() {
+    const so = stl.sources, row = (attrs, name, n) => `<button type="button" class="st-src" ${attrs}><b>${R.esc(name)}</b><small>${n} still${n === 1 ? "" : "s"}</small></button>`;
+    $("stillsT").textContent = "Use existing stills"; $("stillsGo").hidden = true; $("stillsBack").hidden = true;
+    stillsSay(so.scenes.length + so.folders.length ? "Pick where the stills are. Nothing changes until you accept the match." : "No stills were found yet.");
+    $("stillsBody").innerHTML =
+      (so.scenes.length ? `<h3 class="sect-h">Anime scenes in Ibasho</h3><div class="st-list">${so.scenes.map((x) => row(`data-scene="${R.esc(x.id)}"`, x.title, x.stills)).join("")}</div>` : "") +
+      (so.folders.length ? `<h3 class="sect-h">Stills folders on this computer</h3><div class="st-list">${so.folders.map((x) => row(`data-root="${x.root}" data-folder="${R.esc(x.folder)}"`, x.name, x.stills)).join("")}</div>` : "") +
+      `<details class="st-add"${so.scenes.length + so.folders.length ? "" : " open"}><summary>Stills kept somewhere else on the computer</summary>` +
+      `<p class="hint">A stills folder is any folder that holds scene folders, each with a SCENE_PLAN.json whose shots name their still and what part of the script they show.</p>` +
+      (so.roots.length ? `<ul class="st-roots">${so.roots.map((r) => `<li><span>${R.esc(r.path || r.name)}</span>${so.local && !r.fixed ? `<button type="button" class="btn" data-unroot="${R.esc(r.path)}">Take off the list</button>` : ""}</li>`).join("")}</ul>` : "") +
+      (so.local ? `<div class="field"><label for="stillsPath">The folder's whole path</label><div class="row"><input type="text" id="stillsPath" placeholder="/path/to/your/episodes" autocomplete="off" spellcheck="false"><button type="button" class="btn" id="stillsAdd">Add this folder</button></div></div>`
+        : `<p class="hint">A folder can only be added on the computer that runs Ibasho (open Ibasho there, then this window).</p>`) + `</details>`;
+  }
+  async function stillsMatch(source) {
+    stl.source = source; stillsSay("Matching stills to panels…"); $("stillsBody").innerHTML = "";
+    try {
+      try { await save(); } catch (e) { /* the match then uses the pages as last saved */ }
+      stl.match = await stillsApi("match", { p: proj.id, source });
+      stl.picks = new Map(stl.match.panels.filter((q) => q.pick && !q.has).map((q) => [q.id, q.pick]));
+      stillsSheet();
+    } catch (e) { stillsSay(String(e.message || e), true); $("stillsBack").hidden = false; }
+  }
+  function stillsSheet() {
+    const m = stl.match, withPick = m.panels.filter((q) => q.pick).length, n = stl.picks.size, used = new Map(); for (const [panel, shot] of stl.picks) used.set(shot, (used.get(shot) || 0) + 1);
+    $("stillsT").textContent = "The match"; $("stillsBack").hidden = false;
+    $("stillsGo").hidden = false; $("stillsGo").disabled = !n; $("stillsGo").textContent = n ? `Put ${n} still${n === 1 ? "" : "s"} on ${n === 1 ? "its panel" : "their panels"}` : "No still is ticked";
+    stillsSay(`${m.count} stills, ${m.panels.length} panels: a still was found for ${withPick}. Untick or change any; the ${m.panels.length - n} left are for the Artist to draw.`);
+    let last = null;
+    $("stillsBody").innerHTML = `<div class="st-sheet">` + m.panels.map((q, i) => {
+      const head = q.page !== last ? `<h3 class="sect-h">Page ${q.number}</h3>` : ""; last = q.page;
+      const shot = stl.picks.get(q.id) || "", sv = shot && m.stills[shot], opt = q.options.find((o) => o.shot === shot), twice = shot && used.get(shot) > 1;
+      const nth = m.panels.slice(0, i + 1).filter((x) => x.page === q.page).length;
+      return head + `<div class="st-row${shot ? "" : " off"}" data-panel="${R.esc(q.id)}">` +
+        (sv ? `<img src="${R.esc(sv.url)}" alt="" loading="lazy">` : `<span class="st-none">${q.options.length ? "Not used" : "No still"}</span>`) +
+        `<div class="st-what"><b>Panel ${nth}${q.shot ? " · " + R.esc(q.shot) : ""}${q.who.length ? " · " + R.esc(q.who.join(", ")) : ""}</b><small>${R.esc(q.action || "Nothing written for this panel.")}</small>` +
+        (q.has ? `<small class="st-has">This panel already has a picture${shot ? ": the still will take its place" : ""}.</small>` : "") +
+        (twice ? `<small class="st-warn">This still is on another panel too.</small>` : "") +
+        (q.options.length ? `<label class="st-pick"><span class="vh">Still for panel ${nth} on page ${q.number}</span><select data-pick="${R.esc(q.id)}"><option value="">${q.has ? "Keep its picture" : "No still: the Artist draws it"}</option>${q.options.map((o) => `<option value="${R.esc(o.shot)}"${o.shot === shot ? " selected" : ""}>${R.esc(o.shot)}: ${R.esc(o.why)}</option>`).join("")}</select></label>` +
+          (sv && sv.action ? `<small class="st-shot">The still: ${R.esc(sv.action)}</small>` : "") : `<small>Nothing in the stills shows this part of the script.</small>`) +
+        `</div></div>`; }).join("") + `</div>`;
+  }
+  async function stillsUse() {
+    const picks = [...stl.picks].map(([panel, shot]) => ({ panel, shot })); if (!picks.length || !(await okToWrite())) return;
+    $("stillsGo").disabled = true; stillsSay(`Putting ${picks.length} still${picks.length === 1 ? "" : "s"} in place…`);
+    try {
+      const j = await stillsApi("use", { p: proj.id, source: stl.source, picks });
+      stl.placed = j.placed; await refreshArt();
+      setStatus(`${j.placed.length} still${j.placed.length === 1 ? "" : "s"} in place. The panels with none are for the Artist.`, "ok");
+      stillsFaces();
+    } catch (e) { $("stillsGo").disabled = false; stillsSay(String(e.message || e), true); }
+  }
+  const stillsPanel = (id) => { let f = null; for (const p of spec.pages) if (p.layout) eachPanel(p.layout.rows, (q) => { if (q.id === id) f = q; }); return f; };
+  function stillsFaces() {
+    $("stillsT").textContent = "Where is the face?"; $("stillsGo").hidden = true; $("stillsBack").hidden = true;
+    stillsSay("Done: the stills are on their panels. A narrow panel shows only part of a picture: tap the face (or whatever matters most) in any picture that needs it, then close this window.");
+    $("stillsBody").innerHTML = `<div class="st-faces">` + stl.placed.map((x) => { const q = stillsPanel(x.panel); if (!q || !q.image) return "";
+      return `<figure><button type="button" class="st-face" data-face="${R.esc(x.panel)}" aria-label="Tap the face in the still on panel ${R.esc(x.panel)}"><img src="${R.esc(proj.dir + q.image)}" alt=""><i hidden></i></button><figcaption>${R.esc(x.shot)}</figcaption></figure>`; }).join("") + `</div>`;
+  }
+  async function stillsFace(btn, e) {
+    const img = btn.querySelector("img"), r = img.getBoundingClientRect(), f = [round3(clamp01((e.clientX - r.left) / r.width)), round3(clamp01((e.clientY - r.top) / r.height))], id = btn.dataset.face;
+    const dot = btn.querySelector("i"); dot.hidden = false; dot.style.left = f[0] * 100 + "%"; dot.style.top = f[1] * 100 + "%";
+    try {
+      await stillsApi("focus", { p: proj.id, panel: id, focus: f });
+      const q = stillsPanel(id); if (q) { q.focus = f; delete q.zoom; render(); snap(); }
+      btn.closest("figure").classList.add("set"); stillsSay("Kept. Tap again to move it, or tap another picture.");
+    } catch (err) { stillsSay(String(err.message || err), true); }
+  }
+  function wireStills() {
+    $("stillsBtn").addEventListener("click", openStills);
+    $("stillsX").addEventListener("click", () => $("stillsDlg").close());
+    $("stillsBack").addEventListener("click", () => { stl.match = null; stillsSources(); });
+    $("stillsGo").addEventListener("click", stillsUse);
+    $("stillsBody").addEventListener("change", (e) => { const sel = e.target.closest("[data-pick]"); if (!sel) return; if (sel.value) stl.picks.set(sel.dataset.pick, sel.value); else stl.picks.delete(sel.dataset.pick); const y = $("stillsDlg").scrollTop; stillsSheet(); $("stillsDlg").scrollTop = y; const again = $("stillsBody").querySelector(`[data-pick="${CSS.escape(sel.dataset.pick)}"]`); if (again) again.focus(); });
+    $("stillsBody").addEventListener("click", async (e) => {
+      const src = e.target.closest(".st-src"), face = e.target.closest("[data-face]"), un = e.target.closest("[data-unroot]");
+      if (src) return stillsMatch(src.dataset.scene != null ? { scene: src.dataset.scene } : { root: +src.dataset.root, folder: src.dataset.folder });
+      if (face) return stillsFace(face, e);
+      if (un || e.target.id === "stillsAdd") {
+        try { await stillsApi("roots", un ? { remove: un.dataset.unroot } : { add: $("stillsPath").value }); stl.sources = await stillsApi("sources"); stillsSources(); if (!un && !stl.sources.folders.length) stillsSay("The folder is on the list, but no SCENE_PLAN.json with stills was found in it (up to three folders down).", true); }
+        catch (err) { stillsSay(String(err.message || err), true); }
+      }
     });
   }
 
@@ -647,8 +917,10 @@
   }
   function renderSeries() {
     if (!bible) { $("seCast").innerHTML = `<p class="empty">This project has no series settings.</p>`; return; }
-    setVal("seStyle", bible.style || ""); $("seColour").checked = !!bible.colour; $("seStrict").checked = !!bible.strict; $("seToner").checked = bible.tone_by === "toner"; $("seTonerBox").style.display = bible.colour ? "none" : "flex"; $("seNoNames").checked = !!bible.no_names; $("seStandInsBox").hidden = !bible.no_names; setVal("seStandIns", bible.stand_ins || "");
+    setVal("seStyle", bible.style || ""); $("seColour").checked = !!bible.colour; $("seStrict").checked = !!bible.strict; $("seToner").checked = bible.tone_by === "toner"; $("seTonerBox").style.display = bible.colour ? "none" : "flex"; renderMood(); $("seToneAuto").checked = !!bible.tone_auto; $("seToneAutoBox").style.display = bible.colour || bible.tone_by !== "toner" ? "none" : "flex"; $("seNoNames").checked = !!bible.no_names; $("seStandInsBox").hidden = !bible.no_names; setVal("seStandIns", bible.stand_ins || "");
     readingSegs($("seReading"), readingNow());
+    const on = readOnNow(); $("seReadOn").innerHTML = Object.entries(READ_ON).map(([k, [a, b]]) => `<button type="button" class="seg" data-readon="${k}" aria-pressed="${on === k}">${a} <small>(${b})</small></button>`).join("");
+    $("seReadOnNote").textContent = on === "phone" ? "Pages are read small: the Paneler aims for 3 to 5 roomy panels a page, and the checks say so when pages get crowded." : "Pages are read at book size: about five panels a page, up to six.";
     $("seReadingNote").textContent = readingNow() === "rtl" ? "Panels run from the right of each row, and in a panel the first balloon sits top right. The words stay in horizontal English."
       : "Panels run from the left of each row, and in a panel the first balloon sits top left.";
     const cur = STYLES.find((s) => s.id === bible.style_id) || STYLES.find((s) => s.style === bible.style), edited = cur && cur.style !== bible.style;
@@ -692,6 +964,14 @@
     return c.toDataURL("image/jpeg", 0.9);
   }
   function wireSeries() {
+    $("seReadOn").addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-readon]"); if (!b || !bible || b.dataset.readon === readOnNow()) return;
+      const was = bible.read_on; bible.read_on = b.dataset.readon; clearTimeout(bibleTimer);
+      try { const r = await fetch("/api/bible?p=" + encodeURIComponent(proj.id), { method: "PUT", body: JSON.stringify(bible) }); if (!r.ok) throw new Error("not saved"); }
+      catch (err) { bible.read_on = was; setStatus("Where the series is read could not be saved.", "error"); renderSeries(); return; }
+      spec.read_on = bible.read_on; renderSeries(); render();
+      setStatus(bible.read_on === "phone" ? "This series is read on a phone: new storyboards aim for 3 to 5 panels a page." : "This series is read in print: new storyboards aim for about five panels a page.", "ok");
+    });
     $("seReading").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-reading]"); if (!b || !bible || b.dataset.reading === readingNow()) return;
       const to = b.dataset.reading, drawn = spec.pages.reduce((n, p) => n + (p.layout ? leaves(p.layout.rows).filter((q) => q.image).length : 0), 0);
@@ -725,6 +1005,11 @@
     $("seStyle").addEventListener("input", (e) => { if (!bible) return; if (/<[^<>]{3,}>/.test(e.target.value)) { $("seStyleNote").textContent = "Not used yet: fill in every part between the < > marks. Until then pictures keep the style from before."; return; } bible.style = e.target.value; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     const ownSend = async (bodyObj) => { const r = await fetch("/api/styles", { method: "POST", body: JSON.stringify(bodyObj) }), j = await r.json().catch(() => ({})); if (!r.ok) { setStatus(j.error || "The style could not be saved.", "error"); return null; }
       STYLES = await fetch("/api/styles").then((x) => x.json()).catch(() => STYLES); return j; };
+    $("seMoodFile").addEventListener("change", async (e) => { const f = e.target.files[0]; e.target.value = ""; if (!f || !bible) return;
+      if (moodRefs().length >= MOOD_MAX) return setStatus(`A series has ${MOOD_MAX} mood pictures at most. Remove one first.`, "error");
+      try { const r = await addUpload(f); bible.mood = moodRefs().map((m) => ({ id: m.id, name: m.name })).concat([{ id: r.id, name: String(f.name || "picture").slice(0, 80) }]); $("seStyleNote").textContent = "Saving…"; saveBible(); renderMood(); setStatus("The mood picture goes with every panel drawn from now on. Pictures already drawn are not changed.", "ok"); }
+      catch (err) { setStatus("That picture could not be added.", "error"); } });
+    $("seMoodList").addEventListener("click", (e) => { const b = e.target.closest("[data-mood-del]"); if (!b || !bible) return; bible.mood = moodRefs().filter((m) => m.id !== b.dataset.moodDel).map((m) => ({ id: m.id, name: m.name })); if (!bible.mood.length) delete bible.mood; $("seStyleNote").textContent = "Saving…"; saveBible(); renderMood(); });
     $("seOwnTpl").addEventListener("click", () => { // a style holds better when each part is said: the five sections our own styles are written in
       if (!bible || !confirm("Replace the style text in this box with five empty sections to fill in? The series keeps its style until every section is filled.")) return;
       const t = "Style: <one or two sentences: what kind of picture this is, and what it is not>. CHARACTER DESIGN: <head and body proportions; face shape; how eyes, brows, nose and mouth are drawn; hair; the resting expression>. LINE AND COLOUR: <the line: tool, weight, how steady; shading; palette; light; texture>. COMPOSITION AND FINISH: <how full or empty a picture is; how backgrounds are drawn where asked for; how much detail>. AVOID: <what it must never look like>. Do not copy any labels or text from the reference sheets.";
@@ -740,7 +1025,8 @@
       const f = e.target.files[0], cur = bible && STYLES.find((q) => q.id === bible.style_id); if (!f || !cur || !cur.own) return;
       if (await ownSend({ id: cur.id, dataUrl: await shrinkUpload(f) })) { renderSeries(); setStatus("Example picture added.", "ok"); } e.target.value = "";
     });
-    $("seToner").addEventListener("change", (e) => { if (!bible) return; if (e.target.checked) bible.tone_by = "toner"; else delete bible.tone_by; $("seStyleNote").textContent = "Saving…"; saveBible(); });
+    $("seToner").addEventListener("change", (e) => { if (!bible) return; if (e.target.checked) bible.tone_by = "toner"; else delete bible.tone_by; $("seToneAutoBox").style.display = bible.colour || bible.tone_by !== "toner" ? "none" : "flex"; $("seStyleNote").textContent = "Saving…"; saveBible(); });
+    $("seToneAuto").addEventListener("change", (e) => { if (!bible) return; if (e.target.checked) bible.tone_auto = true; else delete bible.tone_auto; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     $("seStrict").addEventListener("change", (e) => { if (!bible) return; bible.strict = e.target.checked; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     $("seNoNames").addEventListener("change", (e) => { if (!bible) return; bible.no_names = e.target.checked; $("seStandInsBox").hidden = !bible.no_names; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     $("seStandIns").addEventListener("input", (e) => { if (!bible) return; bible.stand_ins = e.target.value; $("seStyleNote").textContent = "Saving…"; saveBible(); });
@@ -897,7 +1183,7 @@
         selSvg += `<circle class="tail-handle" data-tail="${sel}" cx="${tx}" cy="${ty}" r="22"/><circle class="tail-dot" cx="${tx}" cy="${ty}" r="7"/>`;
       }
     }
-    const art = $("art"), href = p.layout ? "" : BASE + p.art;
+    const art = $("art"), href = p.layout ? "" : BASE + R.pageArt(p);
     if (art.getAttribute("href") !== href) art.setAttribute("href", href);
     art.setAttribute("visibility", p.layout ? "hidden" : "visible");
     $("page").classList.toggle("layout-mode", mode === "layout" || mode === "art");
@@ -975,7 +1261,7 @@
     for (const j of list) jobs[j.panel] = j;
     const landed = list.filter((j) => j.status === "done" && (!before[j.panel] || before[j.panel].status !== "done"));
     if (landed.some((j) => j.kind === "breakout")) takeBreakouts();
-    if (landed.some((j) => j.kind === "tone")) takeTone();
+    if (landed.some((j) => j.kind === "tone")) { takeTone(); if (toneDue.size) toneWhenFree(); }
     if (landed.some((j) => j.kind === "sheet")) await reloadBible();
     if (mode === "series") { if (document.activeElement.tagName !== "TEXTAREA") renderSeries(); }
     if (landed.some((j) => j.kind !== "sheet")) await refreshArt();
@@ -1077,10 +1363,11 @@
     spec.library = fresh.library;
     const got = new Map(); for (const p of fresh.pages) if (p.layout) { eachPanel(p.layout.rows, (q) => { if (q.take) got.set(q.id, q); }); for (const q of p.layout.insets || []) if (q.take) got.set(q.id, q); }
     let n = 0;
-    const put = (q) => { const o = got.get(q.id); if (o && o.take !== q.take) { q.image = o.image; q.take = o.take; delete q.focus; delete q.zoom; delete q.request; n++; } };
-    for (const p of spec.pages) if (p.layout) { eachPanel(p.layout.rows, put); for (const q of p.layout.insets || []) put(q); }
+    const put = (q) => { const o = got.get(q.id); if (o && o.take !== q.take) { q.image = o.image; q.take = o.take; delete q.focus; delete q.zoom; delete q.request; n++; return true; } return false; };
+    const fresh2 = new Set();
+    for (const p of spec.pages) if (p.layout) { const hit = (q) => { if (put(q)) fresh2.add(p.id); }; eachPanel(p.layout.rows, hit); for (const q of p.layout.insets || []) hit(q); }
     render();
-    if (n) { snap(); setStatus(`${n} new picture${n === 1 ? "" : "s"} from the Artist ${n === 1 ? "is" : "are"} in place.`, "ok"); }
+    if (n) { snap(); setStatus(`${n} new picture${n === 1 ? "" : "s"} from the Artist ${n === 1 ? "is" : "are"} in place.`, "ok"); toneWhenFree([...fresh2]); }
   }
   const GRIP = '<span class="grip" title="Drag to reorder" aria-hidden="true"><svg viewBox="0 0 10 16"><circle cx="2" cy="2" r="1.6"/><circle cx="8" cy="2" r="1.6"/><circle cx="2" cy="8" r="1.6"/><circle cx="8" cy="8" r="1.6"/><circle cx="2" cy="14" r="1.6"/><circle cx="8" cy="14" r="1.6"/></svg></span>';
   /** A small picture of a page for the pages list; kept until the page's art or layout changes. */
@@ -1088,7 +1375,7 @@
   function pageThumb(p) {
     const key = BASE + "|" + (p.layout ? JSON.stringify(p.layout) : p.art || "");
     const hit = thumbCache.get(p.id); if (hit && hit.key === key) return hit.html;
-    const art = p.layout ? R.layoutSvg(p, (src) => BASE + src, sizes()) : p.art ? `<image href="${R.esc(BASE + p.art)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>` : "";
+    const art = p.layout ? R.layoutSvg(p, (src) => BASE + src, sizes()) : p.art ? `<image href="${R.esc(BASE + R.pageArt(p))}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>` : "";
     // its own ids: the page's clip paths share names with the open page, and a hidden copy must never clip the real one
     const pre = "th" + String(p.id).replace(/[^\w-]/g, "") + "-";
     const own = art.replace(/\bid="([^"]+)"/g, `id="${pre}$1"`).replace(/url\(#([^)]+)\)/g, `url(#${pre}$1)`).replace(/href="#([^"]+)"/g, `href="#${pre}$1"`);
@@ -1199,7 +1486,15 @@
   function autoRefs(pid) {
     const a = aiPrompt(pid), f = findPanel(pid); if (!a) return [];
     const saved = (a.cast || []).filter((n) => !(a.named || []).includes(n)).map(bankSaved).filter(Boolean); // also when redrawing the panel they were saved from
-    return a.refs.map(bankRef).concat(saved.map(savedRef)).concat((a.things || []).filter((t) => t.sheet).map(thingRef)).slice(0, 6); // people first, then the place and props
+    return a.refs.map(bankRef).concat(saved.map(savedRef)).concat((a.things || []).filter((t) => t.sheet).map(thingRef)).concat(moodRefs()).slice(0, 6); // people first, then the place and props, then the series' mood pictures
+  }
+  /** The series' mood pictures (Series, "Mood pictures"): uploaded pictures that show the look to aim for. They ride along with every panel, last. */
+  const MOOD_MAX = 4, MOOD_NOTE = "mood picture for this series: take the LOOK only (line, tone, light, feeling); never copy its people, places or composition";
+  const moodRefs = () => ((bible && Array.isArray(bible.mood) ? bible.mood : []).filter((m) => m && /^u[a-z0-9]{6,24}$/.test(m.id || "")).slice(0, MOOD_MAX).map((m) => ({ type: "upload", id: m.id, name: m.name || "mood picture", note: MOOD_NOTE, mood: true })));
+  function renderMood() {
+    const box = $("seMoodBox"); if (!box) return; const show = !!bible && store.kind === "local" && proj.own !== false; box.hidden = !show; if (!show) return;
+    const list = moodRefs(); $("seMoodAdd").hidden = list.length >= MOOD_MAX;
+    $("seMoodList").innerHTML = list.map((r) => `<span class="mood-pic" style="display:inline-flex;flex-direction:column;align-items:center;gap:4px">${refThumb(r)}<button type="button" class="btn link" data-mood-del="${R.esc(r.id)}" aria-label="Remove ${R.esc(r.name)}">Remove</button></span>`).join("") || `<span class="hint">None yet.</span>`;
   }
   const refLine = (refs) => (refs && refs.length ? `\n\nINPUT REFERENCES, ordered: ${refs.map((r, i) => `Image ${i + 1}: ${(r.note || "reference").trim()}`).join("; ")}.` : "");
   const promptText = (req) => req.text || (req.prompt || "").split("\n\nINPUT REFERENCES, ordered:")[0];
@@ -1225,7 +1520,7 @@
       if (store.kind === "db") { const s = await store.db.doc("refs/" + id).get(); if (s.exists) uploads[id] = (s.data() || {}).dataUrl || ""; }
       else if (store.kind === "local") { const r = await fetch("/api/ref?id=" + id); if (r.ok) uploads[id] = (await r.json()).dataUrl || ""; }
     } catch (e) { /* thumbnail only */ }
-    if (uploads[id]) renderArtPanel();
+    if (uploads[id]) { renderArtPanel(); if (mode === "series") renderMood(); }
   }
   async function addUpload(file) {
     const img = new Image(), url = URL.createObjectURL(file);
@@ -1345,7 +1640,14 @@
           : st === "toned" ? `Toned: ${t.layers.length ? t.layers.map((n) => n.replace(/^panel \d+, /, "")).join("; ") : "no grey area was found, so no dots were laid"}${t.strokes ? ` · ${t.strokes} stroke${t.strokes === 1 ? "" : "s"} by hand` : ""}.${t.baked ? " Its picture already has dots drawn in: they can clash with the Toner's. Draw it again with flat greys." : ""}`
           : st === "stale" ? "This panel has changed since it was toned (its picture, its place or its crop), so its plain picture is showing. Tone it again."
           : tonerOn() ? "Not toned yet. The Toner turns this picture's flat greys into screentone." : "The Toner can lay screentone over flat greys. For new pictures to be drawn with flat greys, turn on “Screentone made by the Toner” in Series.";
-        $("tonePage").disabled = busy || !canDraw(); $("toneOne").hidden = !st; $("toneOne").disabled = busy || !canDraw(); $("toneHand").hidden = st !== "toned" || !t.layers.length; } }
+        renderToneSet(t); $("tonePage").disabled = busy || !canDraw(); $("toneOne").hidden = !st; $("toneOne").disabled = busy || !canDraw(); $("toneHand").hidden = st !== "toned" || !t.layers.length; } }
+    { const show = !p.layout && !!p.art && store.kind === "local" && !(bible && bible.colour) && proj.own !== false, st = show ? R.pageTone(p) : "", j = jobs["tone:" + p.id], busy = show && toneBusy(); // a page that is one whole picture is toned as one
+      $("toneWhole").hidden = !show;
+      if (show) { $("toneWholeBtn").disabled = busy || !canDraw(); $("toneWholeBtn").textContent = st ? "Tone this page again" : "Tone this page";
+        $("toneWholeInfo").textContent = busy ? "The Toner is at work on this page…" : j && j.status === "failed" ? "The Toner stopped: " + (j.msg || "no reason given")
+          : st === "toned" ? `Toned: ${p.toned.layers.length ? p.toned.layers.map((n) => n.replace(/^the page, /, "")).join("; ") : "no grey area was found, so no dots were laid"}.${p.toned.baked ? " The picture already has dots drawn in: they can clash with the Toner's." : ""}`
+          : st === "stale" ? "This page's picture has changed since it was toned, so the plain picture is showing. Tone it again."
+          : "Not toned yet. The Toner turns this picture's flat greys into screentone, over the whole page as one picture."; } }
     if (!p.layout) { $("artHint").textContent = "This page was drawn as one picture. Panels can be drawn one at a time on storyboard pages."; return; }
     $("artHint").textContent = "Tap a panel, on the page or in the sidebar, to draw it.";
     if (!f) {
@@ -1483,7 +1785,7 @@
     if (!bible || !bible.strict) return [];
     return ((q.board && q.board.who) || []).map((w) => w.name).filter((n, i, a) => a.indexOf(n) === i).filter((n) => { const c = bible.cast[n]; return !(hasSheet(c) && c.approved !== false); });
   }
-  const missingCount = () => spec.pages.reduce((n, p) => n + (p.layout ? leaves(p.layout.rows).concat(p.layout.insets || []).filter((q) => !q.image && !q.request).length : 0), 0); // a quick count: no prompts are written for it
+  const missingCount = () => spec.pages.reduce((n, p) => n + (p.layout ? leaves(p.layout.rows).concat(p.layout.insets || []).filter((q) => !q.image && !q.request).length : 0), 0) + missingBos().length; // a quick count: no prompts are written for it
   /** Every panel of the chapter with no picture and no request waiting, page by page. */
   function chapterMissing() {
     const keep = pageIdx, out = []; let total = 0;
@@ -1491,13 +1793,16 @@
     pageIdx = keep; return { pages: out, total };
   }
   function drawChapter() {
-    const m = chapterMissing(), keep = pageIdx, ids = [], held = new Set();
+    const m = chapterMissing(), keep = pageIdx, ids = [], held = new Set(), bos = missingBos();
+    const boNote = bos.length ? ` ${bos.length} break-out${bos.length === 1 ? " is" : "s are"} drawn too (Codex, about three minutes each).` : "";
+    const sendBos = async () => { for (const b of bos) await drawBo(b, true); };
     for (const { i, list } of m.pages) { pageIdx = i; for (const q of list) { const lack = needSheet(q); if (lack.length) { lack.forEach((n) => held.add(n)); continue; } if (queuePanel(q.id)) ids.push(q.id); } }
     pageIdx = keep;
+    if (!ids.length && bos.length) { sendBos(); setStatus(`Drawing ${bos.length} break-out${bos.length === 1 ? "" : "s"}: about three minutes each. ${bos.length === 1 ? "It lands" : "They land"} on the page by ${bos.length === 1 ? "itself" : "themselves"}.` + (held.size ? ` Panels wait for approved sheets: ${[...held].join(", ")}.` : ""), held.size ? "warn" : "ok"); return; }
     if (!ids.length) { setStatus(held.size ? `Nothing drawn: ${[...held].join(", ")} ${held.size === 1 ? "has" : "have"} no approved character sheet. Add or approve under Series.` : "There is nothing left to draw.", held.size ? "error" : "ok"); return; }
     render(); snap();
-    setStatus(`Drawing ${ids.length} picture${ids.length === 1 ? "" : "s"}, two at a time: about ${Math.max(1, Math.round(ids.length * 1.5))} minutes. You can close this page; it carries on.` + (held.size ? ` ${m.total - ids.length} wait for approved sheets: ${[...held].join(", ")}.` : ""), held.size ? "warn" : "ok");
-    startJobs(ids);
+    setStatus(`Drawing ${ids.length} picture${ids.length === 1 ? "" : "s"}, two at a time: about ${Math.max(1, Math.round(ids.length * 1.5))} minutes. You can close this page; it carries on.` + boNote + (held.size ? ` ${m.total - ids.length} wait for approved sheets: ${[...held].join(", ")}.` : ""), held.size ? "warn" : "ok");
+    startJobs(ids); sendBos();
   }
   // ---------- the Assistant on the manga screen (studio.js): what is open, and the actions it may propose ----------
   function pageOfPanel(id) { return spec.pages.findIndex((p) => p.layout && leaves(p.layout.rows).concat(p.layout.insets || []).some((q) => q.id === id)); }
@@ -1529,14 +1834,36 @@
   function asPanelPage(id) { const i = pageOfPanel(String(id || "").trim()); if (i < 0) throw new Error(`There is no panel "${id}" in this chapter.`); return i; }
   function asBoardOnly() { if (!spec || spec.kind !== "storyboard") throw new Error("This works on a storyboarded chapter."); }
   /** Put these panels (reading order) on page i: the director picks the layout by their weights, and a lettered page is lettered again. */
-  function setPagePanels(i, panels, relettered) {
+  /** Lettering of a page the Assistant changed (20 Nov 2026): the Letterer places every line afresh, then each panel whose balloons
+   *  still sit cleanly where the person had them (same place inside the panel; inside it, off faces, off other balloons, in reading
+   *  order) keeps them as they were, with their words and styles. Only panels where the old places no longer work are lettered again.
+   *  was = capture() of the pages, taken before the change. -> { text, kept, redone } (panels) */
+  const AS_MOVED = /Leaves the page|Spills out of its panel|Covers a face|^Overlaps|Out of reading order/;
+  function asKeepPlacement(p, was, fresh) {
+    const cells = R.allPanels(p.layout), ids = cells.map((c) => c.panel.id), group = (list, key) => { const m = new Map(); for (const x of list) { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; };
+    const recs = (was || []).filter((r) => ids.includes(r.id)).map((r) => ({ ...r, it: JSON.parse(JSON.stringify(r.it)) })); // copies: the fresh lettering stays a choice
+    const loose = (p.text || []).filter((it) => !it.panel || it.free), neu = group(fresh, (it) => it.panel);
+    if (!recs.length) return { text: fresh.concat(loose), kept: 0, redone: neu.size };
+    restore(recs, p);
+    const old = group(recs.map((r) => r.it), (it) => it.panel), use = new Set([...old.keys()].filter((id) => !old.get(id).some((it) => it.bridge))); // a bridging balloon belongs to the border it sat on
+    const build = () => cells.flatMap((c) => (use.has(c.panel.id) ? old.get(c.panel.id) : neu.get(c.panel.id) || [])).concat(loose);
+    const had = use.size; let text = build();
+    const keepText = p.text; p.text = text;
+    try { for (const r of R.check(p, text.map((it) => R.measure(it, spec, measureText)), R.protectBoxes(p, lib()))) if (r.i >= 0 && AS_MOVED.test(r.msg) && text[r.i].panel) use.delete(text[r.i].panel); }
+    finally { p.text = keepText; }
+    if (use.size !== had) text = build();
+    return { text, kept: use.size, redone: [...new Set(text.filter((it) => it.panel && !it.free && !use.has(it.panel)).map((it) => it.panel))].length };
+  }
+  let asKept = { kept: 0, redone: 0 }; // what the last page step did to the lettering, for its message
+  const asLettered = () => (!asKept.kept ? "lettered again" : !asKept.redone ? "balloons kept where you placed them" : `balloons kept as placed in ${asKept.kept} panel${asKept.kept === 1 ? "" : "s"}, ${asKept.redone} lettered again`);
+  function setPagePanels(i, panels, relettered, was) {
     const p = spec.pages[i], ids = new Set(panels.map((q) => q.id));
     p.layout = { ...(p.layout && p.layout.rtl ? { rtl: true } : {}), ...(p.layout && (p.layout.insets || []).length ? { insets: p.layout.insets } : {}), ...(p.layout && (p.layout.breakouts || []).length ? { breakouts: p.layout.breakouts } : {}),
       rows: panels.map((q) => { const n = { ...q, w: 1 }; delete n.slant; return { h: 1, panels: [n] }; }) };
     delete p.plan; ensureIds(p);
     const keep = pageIdx; pageIdx = i;
     p.text = (p.text || []).filter((it) => !it.panel || it.free || ids.has(it.panel) || (p.layout.insets || []).some((q) => q.id === it.panel)); // balloons of panels that left go with them
-    try { if (panels.length > 1) applyTemplate(null, true, true); if (relettered && R.planFor(p).length) p.text = R.autoPlace(p, spec, lib(), measureText); }
+    try { if (panels.length > 1) applyTemplate(null, true, true); if (relettered && R.planFor(p).length) { const k = asKeepPlacement(p, was, R.autoPlace(p, spec, lib(), measureText)); p.text = k.text; asKept.kept += k.kept; asKept.redone += k.redone; } }
     finally { pageIdx = keep; }
   }
   const blankPage = (like) => ({ id: "board-" + newId(), number: 0, label: "", note: "", text: [], layout: { ...(like.layout && like.layout.rtl ? { rtl: true } : {}), rows: [] } });
@@ -1546,12 +1873,12 @@
     const order = mainPanels(p), cuts = [...new Set(asIds(a.after).map((id) => order.findIndex((q) => q.id === id)))].sort((x, y) => x - y);
     if (!cuts.length || cuts.some((c) => c < 0 || c >= order.length - 1)) throw new Error(`"after" must name panels on ${asName(p)} that are not its last one. Its panels, in reading order: ${order.map((q) => q.id).join(", ")}.`);
     const groups = []; let s0 = 0; for (const c of cuts) { groups.push(order.slice(s0, c + 1)); s0 = c + 1; } groups.push(order.slice(s0));
-    const lettered = (p.text || []).length > 0, texts = p.text || [], was = p.number;
+    const lettered = (p.text || []).length > 0, texts = p.text || [], was = p.number, cap = capture(p); asKept = { kept: 0, redone: 0 };
     const made = groups.slice(1).map(() => blankPage(p)); spec.pages.splice(i + 1, 0, ...made);
     made.forEach((np, k) => { const ids = new Set(groups[k + 1].map((q) => q.id)); np.text = texts.filter((it) => ids.has(it.panel)); });
     { const gone = new Set(groups.slice(1).flat().map((q) => q.id)); p.text = texts.filter((it) => !gone.has(it.panel)); }
-    renumber(); groups.forEach((g, k) => setPagePanels(i + k, g, lettered));
-    return asDone(i, `Page ${was} is now pages ${p.number} ${made.length === 1 ? "and" : "to"} ${p.number + made.length} (${groups.map((g) => g.length).join(", ")} panels)${lettered ? ", lettered again" : ""}. ${spec.pages.filter((q) => !q.cover).length} pages in the chapter.`);
+    renumber(); groups.forEach((g, k) => setPagePanels(i + k, g, lettered, cap));
+    return asDone(i, `Page ${was} is now pages ${p.number} ${made.length === 1 ? "and" : "to"} ${p.number + made.length} (${groups.map((g) => g.length).join(", ")} panels)${lettered ? ", " + asLettered() : ""}. ${spec.pages.filter((q) => !q.cover).length} pages in the chapter.`);
   }
   function asMove(a) {
     asBoardOnly(); const i = asPanelPage(a.panel), p = spec.pages[i], order = mainPanels(p), k = order.findIndex((q) => q.id === String(a.panel).trim()), next = /^next/i.test(String(a.to || ""));
@@ -1562,18 +1889,20 @@
     let j = next ? i + 1 : i - 1, made = false;
     if (!spec.pages[j] || !spec.pages[j].layout || spec.pages[j].cover) { spec.pages.splice(next ? i + 1 : i, 0, blankPage(p)); made = true; j = next ? i + 1 : i; }
     const src = spec.pages[next ? i : (made ? i + 1 : i)], dst = spec.pages[j], q = order[k], lettered = (src.text || []).length > 0 || (dst.text || []).length > 0;
+    const cap = capture(src).concat(made ? [] : capture(dst)); asKept = { kept: 0, redone: 0 };
     const there = made ? [] : mainPanels(dst); dst.text = (dst.text || []).concat((src.text || []).filter((it) => it.panel === q.id)); src.text = (src.text || []).filter((it) => it.panel !== q.id);
-    renumber(); setPagePanels(spec.pages.indexOf(src), order.filter((x) => x !== q), lettered); setPagePanels(spec.pages.indexOf(dst), next ? [q, ...there] : [...there, q], lettered);
-    return asDone(spec.pages.indexOf(dst), `Panel ${q.id} moved to ${made ? "a new " : ""}${asName(dst)} (${mainPanels(dst).length} panels there now, ${mainPanels(src).length} left on ${asName(src)})${lettered ? "; both lettered again" : ""}.`);
+    renumber(); setPagePanels(spec.pages.indexOf(src), order.filter((x) => x !== q), lettered, cap); setPagePanels(spec.pages.indexOf(dst), next ? [q, ...there] : [...there, q], lettered, cap);
+    return asDone(spec.pages.indexOf(dst), `Panel ${q.id} moved to ${made ? "a new " : ""}${asName(dst)} (${mainPanels(dst).length} panels there now, ${mainPanels(src).length} left on ${asName(src)})${lettered ? "; " + asLettered() : ""}.`);
   }
   function asJoin(a) {
     asBoardOnly(); const i = asPage(a.page), p = spec.pages[i], n = spec.pages[i + 1];
     if (!p.layout || p.cover || !n || !n.layout || n.cover) throw new Error(`${asName(p)} has no page after it to join with.`);
     const all = mainPanels(p).concat(mainPanels(n)); if (all.length > 8) throw new Error(`That would put ${all.length} panels on one page: too many to read. Move single panels with move_panel.`);
     const lettered = (p.text || []).length > 0 || (n.text || []).length > 0, was = [p.number, n.number];
+    const cap = capture(p).concat(capture(n)); asKept = { kept: 0, redone: 0 };
     p.text = (p.text || []).concat(n.text || []); if ((n.layout.insets || []).length) p.layout.insets = (p.layout.insets || []).concat(n.layout.insets);
-    spec.pages.splice(i + 1, 1); renumber(); setPagePanels(i, all, lettered);
-    return asDone(i, `Pages ${was[0]} and ${was[1]} are now one page, ${p.number}, with ${all.length} panels${lettered ? ", lettered again" : ""}. ${spec.pages.filter((q) => !q.cover).length} pages in the chapter.`);
+    spec.pages.splice(i + 1, 1); renumber(); setPagePanels(i, all, lettered, cap);
+    return asDone(i, `Pages ${was[0]} and ${was[1]} are now one page, ${p.number}, with ${all.length} panels${lettered ? ", " + asLettered() : ""}. ${spec.pages.filter((q) => !q.cover).length} pages in the chapter.`);
   }
   function asLayout(a) {
     const i = asPage(a.page), p = spec.pages[i]; if (!p.layout || p.cover) throw new Error(`${asName(p)} is one whole picture.`);
@@ -1725,7 +2054,7 @@
   function miniLayout(rows) {
     const cs = R.layoutGeom({ rows, rtl: isRtl() }).cells;
     return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><rect width="${W}" height="${H}" fill="#fff"/>` +
-      cs.map((c) => `<polygon points="${c.poly.map((q) => q[0].toFixed(0) + "," + q[1].toFixed(0)).join(" ")}" fill="#dfe6f3" stroke="#15181d" stroke-width="18"/>`).join("") + "</svg>";
+      cs.map((c) => `<polygon points="${(c.drawPoly || c.poly).map((q) => q[0].toFixed(0) + "," + q[1].toFixed(0)).join(" ")}" fill="#dfe6f3" stroke="#15181d" stroke-width="18"/>`).join("") + "</svg>";
   }
   function renderLayoutPanel() {
     const lp = $("layoutPanel");
@@ -1760,6 +2089,8 @@
         $("pjobHint").textContent = b.job && D.JOBS[b.job] ? D.JOBS[b.job].hint : "Give every panel a job: the layout, the background and how much is drawn all follow from it.";
         $("pweight").innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="seg" data-pw="${n}" aria-pressed="${w === n}" title="${["A tiny beat", "Light", "Middle", "Heavy", "The big moment"][n - 1]}">${n}</button>`).join("");
         $("pface").checked = b.face === "big"; $("preveal").checked = !!b.reveal;
+        const TN = D.TENSION || {}; $("ptension").innerHTML = `<option value="">None (an ordinary beat)</option>` + Object.entries(TN).map(([k, t]) => `<option value="${k}"${b.tension === k ? " selected" : ""}>${R.esc(t.label)}</option>`).join("");
+        $("ptensionHint").textContent = b.tension && TN[b.tension] ? TN[b.tension].hint + " The next drawing of this panel follows it." : "Tense, danger or fear: the Artist picks the camera (low, tilted, close behind the hero) to match.";
       }
       if (panel.board) $("pbg").innerHTML = [["full", "Full"], ["simple", "Hint"], ["tone", "Tone"], ["white", "White"]].map(([k, v]) => `<button type="button" class="seg" data-pbg="${k}" aria-pressed="${(panel.board.bg || "simple") === k}">${v}</button>`).join("");
       setVal("zoomIn", panel.zoom || 1); $("zoomOut").textContent = Math.round((panel.zoom || 1) * 100) + "%";
@@ -1776,10 +2107,10 @@
     // the panel director: layouts with this page's number of panels come first, best fit for the panels' weights first;
     // an even grid or upright gutters that line up are marked (they read as a grid, not as manga)
     const D = window.Director, mine = leaves(p.layout.rows), fit = new Map();
-    if (D && mine.length > 1) D.sorted(mine, T(), R, { avoid: neighbourShapes() }).forEach((x, i) => fit.set(x.template.code, Object.assign({ rank: i }, x)));
+    if (D && (mine.length > 1 || (mine.length === 1 && !p.cover))) D.sorted(mine, T(), R, { avoid: neighbourShapes() }).forEach((x, i) => fit.set(x.template.code, Object.assign({ rank: i }, x)));
     const weighted = mine.some((q) => q.board && (q.board.weight || q.board.job || q.board.splash));
     $("tmplPick").hidden = !fit.size; $("tmplHint").hidden = !fit.size;
-    if (fit.size) $("tmplHint").textContent = weighted ? `Layouts with ${mine.length} panels are listed best fit first for this page's weights. Faded ones are an even grid or have upright gutters that line up.` : `Give the panels a job and a weight (tap a panel) and the best layout for this page is listed first. Faded ones are an even grid or have upright gutters that line up.`;
+    if (fit.size) $("tmplHint").textContent = weighted ? mine.length === 1 ? "This page is one panel. It can sit inside the margins with a border (L1-01), or run to the page's edges with no border (L1-02): that one is for the splash, the biggest picture of the chapter." : `Layouts with ${mine.length} panels are listed best fit first for this page's weights. Faded ones are an even grid or have upright gutters that line up.` : `Give the panels a job and a weight (tap a panel) and the best layout for this page is listed first. Faded ones are an even grid or have upright gutters that line up.`;
     const rate = (t) => { const f = fit.get(t.code); if (f) return f.rating; try { return D ? D.rate(t.rows, R) : null; } catch (e) { return null; } };
     const order = list.slice().sort((a, b) => (fit.has(a.code) ? fit.get(a.code).rank : 1e6) - (fit.has(b.code) ? fit.get(b.code).rank : 1e6));
     $("tmplGrid").innerHTML = order.map((t) => { const rt = rate(t), fault = rt && (rt.even ? "an even grid" : rt.aligned ? "upright gutters line up" : ""), f = fit.get(t.code);
@@ -1889,6 +2220,9 @@
   // ---------- reading direction: right to left (manga) or left to right (comic), one choice for the whole series ----------
   // The series settings say it (bible.reading); a project without that keeps what it was built with; anything older reads left to right.
   const READING = { rtl: ["Right to left", "manga"], ltr: ["Left to right", "comic"] };
+  const READ_ON = { phone: ["Phone", "X, a reading site"], print: ["Print", "a book"] };
+  /** Where the series is read: its settings say, else the chapter as built, else a phone. */
+  function readOnNow() { return bible && (bible.read_on === "phone" || bible.read_on === "print") ? bible.read_on : spec && spec.read_on === "print" ? "print" : "phone"; }
   function readingNow() { return bible && (bible.reading === "rtl" || bible.reading === "ltr") ? bible.reading : original && original.reading === "rtl" ? "rtl" : "ltr"; }
   const isRtl = () => !!(spec && spec.reading === "rtl");
   /** Turn every page to the series' direction. Panels change sides; each balloon keeps its place inside its own panel. -> pages turned */
@@ -1902,6 +2236,7 @@
       restore(cap, p); n++;
     }
     spec.reading = want;
+    if (bible && (bible.read_on === "phone" || bible.read_on === "print")) spec.read_on = bible.read_on; // where the series is read sets the panels-a-page advice
     return n;
   }
   function readingSegs(el, cur, off) {
@@ -2040,7 +2375,8 @@
   function applyTemplate(code, byWeight, quiet) {
     let t = T().find((q) => q.code === code); const p = page(); if (!p.layout) return;
     const D = window.Director, mine = leaves(p.layout.rows);
-    if (D && mine.length > 1) { // sized to this page's weights when the layout has this page's number of panels
+    const wasFull = !!(D && D.fullBleed(p.layout.rows)) && !p.cover; // leaving a full-page picture: the panel gets its border back
+    if (D && (mine.length > 1 || (mine.length === 1 && !p.cover))) { // sized to this page's weights when the layout has this page's number of panels
       const all = D.sorted(mine, T(), R, { avoid: neighbourShapes() }), hit = byWeight ? all[0] : all.find((x) => x.template.code === code);
       if (hit) t = { code: hit.template.code, name: hit.template.name, rows: hit.rows };
     }
@@ -2051,7 +2387,7 @@
       const build = (rows) => rows.map((r) => ({ h: r.h, ...(r.slant ? { slant: r.slant } : {}), ...(r.strip ? { strip: true } : {}), panels: r.panels.map((q) => {
         if (q.rows) return { w: q.w, rows: build(q.rows) };
         const o = old[i++] || {};
-        const n = { w: q.w, type: q.type || o.type || "framed" };
+        const n = { w: q.w, type: q.type || (wasFull ? "framed" : o.type) || "framed" };
         if (q.slant) n.slant = q.slant;
         if (R.validShape(q.shape)) n.shape = q.shape.map((pt) => pt.slice()); // a shape belongs to the place in the layout, not to the panel that moves into it
         if (o.id) n.id = o.id;
@@ -2114,7 +2450,7 @@
       for (const src of R.pictures(p)) if (!map[src]) map[src] = await dataUrl(BASE + src); // panel art (or the Toner's picture of it) and break-outs
       artSvg = R.layoutSvg(p, (s) => map[s], sizes());
     } else {
-      artSvg = `<image href="${await dataUrl(BASE + p.art)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`;
+      artSvg = `<image href="${await dataUrl(BASE + R.pageArt(p))}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`;
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="2048" height="3072"><style>${css}</style>${artSvg}${R.letteringSvg(measured)}${R.pageNumberSvg(p)}</svg>`;
     const img = new Image();
@@ -2128,21 +2464,100 @@
   }
   /** Export: one dialog for a page, some pages or the chapter, as a PDF, PNGs or JPEGs.
    *  The browser draws each page (so the file is what the editor shows), the server keeps the PNGs and builds the download. */
-  const ex = { format: "pdf", size: "full", sets: false, picked: new Set(), busy: false };
+  const ex = { format: "pdf", size: "full", sets: false, paper: "b5", picked: new Set(), busy: false };
   const exLabel = (p, i) => (p.cover ? "Cover" : String(p.number != null ? p.number : i + 1));
   function exPaint() {
     for (const b of $("exFormat").children) b.setAttribute("aria-pressed", b.dataset.format === ex.format);
     for (const b of $("exSize").children) b.setAttribute("aria-pressed", b.dataset.size === ex.size);
+    for (const b of $("exPaper").children) b.setAttribute("aria-pressed", b.dataset.paper === ex.paper);
     const n = ex.picked.size, rtl = spec.reading === "rtl";
     $("exFormatHint").textContent = ex.format === "pdf" ? `One file, pages in reading order${spec.pages.some((p) => p.cover) ? ", the cover first" : ""}. Made for reading on a screen${rtl ? "; it is marked to open right to left" : ""}.`
+      : ex.format === "print" ? `For a printer: every page on a sheet with trim marks and 3 mm of bleed round the cut page${rtl ? ", marked to open right to left" : ""}. The whole page is fitted inside the bleed, so nothing is cut off; on B5 and A5 a full-page picture runs off the top and the foot and the sides stay paper. Ask your printer which paper they want before sending it.`
       : ex.format === "png" ? "The sharpest pictures and the biggest files. More than one page comes as a zip." : "Smaller files, good for posting. More than one page comes as a zip.";
-    $("exSizeRow").hidden = false; $("exSetsRow").hidden = ex.format === "pdf" || n < 2; $("exSets").checked = ex.sets;
+    $("exSizeRow").hidden = ex.format === "print"; $("exPaperRow").hidden = ex.format !== "print"; $("exSetsRow").hidden = ex.format === "pdf" || ex.format === "print" || n < 2; $("exSets").checked = ex.sets;
     for (const b of $("exPages").children) b.setAttribute("aria-pressed", ex.picked.has(+b.dataset.i));
     $("exCount").textContent = `${n} of ${spec.pages.length}`;
     $("exGo").disabled = !n || ex.busy; if (!ex.busy) $("exGo").textContent = n === 1 ? "Export 1 page" : `Export ${n} pages`;
   }
+  // ---------- Publish: the finished chapter goes to the person's reading site as a private draft (page-editor/publish.mjs).
+  // Nothing is made public from here: the person reviews it on the site and publishes there. The key never reaches this screen.
+  const pub = { books: [], busy: false, state: null, sent: null };
+  const pubGet = async (path, opt) => { try { const r = await fetch(path, opt); const j = await r.json().catch(() => ({})); return Object.assign({ httpOk: r.ok, http: r.status }, j); } catch (e) { return { httpOk: false, http: 0, error: "Ibasho on this computer did not answer." }; } };
+  const pubBook = () => pub.books.find((b) => String(b.id) === $("pubBook").value) || null;
+  function pubPaint() {
+    const st = pub.state || {}, has = !!st.key, ok = !!st.connected, n = spec.pages.length;
+    $("pubSetState").textContent = !has ? "not set up yet" : ok ? "connected" : "not connected";
+    $("pubKeyNow").textContent = has ? "saved: " + st.key : ""; $("pubKey").placeholder = has ? "Paste a new key to replace the saved one" : "Paste the key from the site (it starts with ibr_)";
+    if (document.activeElement !== $("pubSite")) $("pubSite").value = st.site || "";
+    $("pubKeysLink").href = st.keys_at || "#"; $("pubForget").hidden = !has; $("pubTest").hidden = !has;
+    $("pubSetNote").textContent = st.last ? st.last.msg : has ? "" : "Paste your key, then Save and test.";
+    $("pubForm").hidden = !ok;
+    const b = pubBook(), num = parseInt($("pubNumber").value, 10), hit = b && (b.chapters || []).find((c) => c.number === num);
+    $("pubBookNote").innerHTML = ok && !pub.books.length ? `You have no manga book on the site yet. <a href="${R.esc(st.new_manga_at || "#")}" target="_blank" rel="noopener">Create one on the site</a>, then press Test connection.` : b && b.published === false ? "This book is not public yet on the site." : "";
+    $("pubNumberNote").textContent = !hit ? "" : hit.status === "draft" ? `Chapter ${num} is already on the site as a draft (${hit.pages} pages). Sending asks first, then replaces that draft.` : `Chapter ${num} is already ${hit.status} on the site and cannot be replaced from here. Pick another number, or change it on the site.`;
+    $("pubThumb").max = String(n);
+    $("pubCheck").textContent = n > 100 ? `This chapter has ${n} pages and the site takes 100 a chapter. Split it in two before sending.` : `All ${n} page${n === 1 ? "" : "s"} are drawn again as you see them now and sent in reading order, at most 2,000 px wide.`;
+    const blocked = !ok || !b || !(num >= 1 && num <= 9999) || !$("pubTitle").value.trim() || n > 100 || (hit && hit.status !== "draft");
+    $("pubGo").disabled = pub.busy || blocked; if (!pub.busy) $("pubGo").textContent = "Send as a draft";
+    $("pubSave").disabled = $("pubTest").disabled = pub.busy;
+  }
+  async function pubLoad() {
+    pub.state = await pubGet("/api/publish"); pub.books = [];
+    if (pub.state.connected || pub.state.key) { const r = await pubGet("/api/publish/books"); if (r.ok) pub.books = r.books || []; pub.state = await pubGet("/api/publish"); }
+    const was = $("pubBook").value, last = pub.sent && String(pub.sent.book);
+    $("pubBook").innerHTML = pub.books.map((b) => `<option value="${R.esc(String(b.id))}">${R.esc((b.book_label ? b.book_label + " · " : "") + b.title)}</option>`).join("");
+    if (pub.books.some((b) => String(b.id) === was)) $("pubBook").value = was; else if (pub.books.some((b) => String(b.id) === last)) $("pubBook").value = last;
+    pubSuggest(); $("pubSet").open = !pub.state.connected; pubPaint();
+  }
+  /** The number to offer: the one this chapter went as last time, else one after the highest on the site, else this chapter's own. */
+  function pubSuggest() { const b = pubBook(); if (!b || $("pubNumber").dataset.typed) return;
+    const top = Math.max(0, ...(b.chapters || []).map((c) => +c.number || 0)); $("pubNumber").value = pub.sent && String(pub.sent.book) === String(b.id) ? pub.sent.number : top ? top + 1 : +spec.chapter || 1; pubTitleFollows(); }
+  /** Until the person types a title of their own, it reads "Chapter N" for the number shown. */
+  function pubTitleFollows() { const t = $("pubTitle"); if (!t.dataset.typed && !(pub.sent && t.value === pub.sent.title)) t.value = `Chapter ${$("pubNumber").value || spec.chapter || 1}`; }
+  async function openPublish() {
+    if (store.kind !== "local") return;
+    $("pubResult").textContent = ""; $("pubOpen").hidden = true; $("pubGo").className = "btn primary"; $("pubKey").value = ""; delete $("pubNumber").dataset.typed; delete $("pubTitle").dataset.typed;
+    pub.sent = await pubGet("/api/publish/sent?p=" + encodeURIComponent(proj.id)); if (!pub.sent || !pub.sent.book) pub.sent = null;
+    $("pubTitle").value = pub.sent ? pub.sent.title : ""; $("pubThumb").value = "1"; $("pubNotes").value = "";
+    const dlg = $("pubDlg"); if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
+    pub.state = null; pubPaint(); await pubLoad();
+    if (!$("pubTitle").value) pubTitleFollows();
+    pubPaint();
+  }
+  async function pubSaveSettings() {
+    const body = { site: $("pubSite").value.trim() }, key = $("pubKey").value.trim(); if (key) body.key = key;
+    pub.busy = true; pubPaint(); $("pubSetNote").textContent = "Asking the site…";
+    const r = await pubGet("/api/publish", { method: "POST", body: JSON.stringify(body) });
+    pub.busy = false; $("pubKey").value = "";
+    if (!r.httpOk) { $("pubSetNote").textContent = r.error || "That could not be saved."; pubPaint(); $("pubSetNote").textContent = r.error || "That could not be saved."; return; }
+    await pubLoad();
+  }
+  async function runPublish(replace) {
+    const b = pubBook(), n = spec.pages.length, go = $("pubGo"), num = parseInt($("pubNumber").value, 10); if (!b) return;
+    const hit = (b.chapters || []).find((c) => c.number === num);
+    if (hit && hit.status === "draft" && !replace) { if (!confirm(`Chapter ${num} is already on the site as a draft (${hit.pages} pages). Replace that draft with these ${n} pages?`)) return; replace = true; }
+    pub.busy = true; pubPaint(); $("pubResult").textContent = ""; $("pubOpen").hidden = true;
+    try {
+      await fetch("/api/exports?p=" + encodeURIComponent(proj.id), { method: "DELETE" }); // only this chapter's pages, as they are now
+      for (let i = 0; i < n; i++) { const p = spec.pages[i]; go.textContent = `Drawing page ${i + 1} of ${n}…`;
+        const blob = await pageBlob(p, p.text.map((it) => R.measure(it, spec, measureText)));
+        const r = await fetch(`/api/export?p=${encodeURIComponent(proj.id)}&name=page-${String(i + 1).padStart(2, "0")}.png`, { method: "POST", body: blob }); if (!r.ok) throw new Error("A page could not be saved on this computer."); }
+      go.textContent = "Sending to the site…";
+      const r = await pubGet("/api/publish/send?p=" + encodeURIComponent(proj.id), { method: "POST", body: JSON.stringify({ book: b.id, number: $("pubNumber").value.trim(), title: $("pubTitle").value.trim(), thumbnail_page: $("pubThumb").value, notes: $("pubNotes").value, replace: !!replace }) });
+      pub.busy = false;
+      if (r.httpOk && r.ok) {
+        pub.sent = r.sent; $("pubResult").textContent = `${r.message} ${r.sent.pages} pages${r.sent.replaced ? ", in place of the draft that was there" : ""}.`;
+        if (r.sent.review_url) { $("pubOpen").href = r.sent.review_url; $("pubOpen").hidden = false; $("pubGo").className = "btn"; } // the next thing to do is on the site
+        setStatus("Sent to your reading site as a draft. It is not public until you publish it there.", "ok"); await pubLoad(); renderExports(); return;
+      }
+      if (r.code === "chapter_exists" && !replace) { pubPaint(); if (confirm((r.error || "A draft with this number is already on the site.") + " Replace the draft on the site?")) return runPublish(true); $("pubResult").textContent = "Not sent: the draft on the site was left as it is."; return; }
+      $("pubResult").textContent = [r.error || "The chapter was not sent.", r.next || "", r.http === 401 || r.code === "no_key" ? "" : "Nothing was saved on the site, so sending again is safe."].filter(Boolean).join(" ");
+      if (r.http === 401 || r.code === "book_not_found") await pubLoad();
+    } catch (e) { pub.busy = false; $("pubResult").textContent = "The chapter was not sent: " + (e && e.message ? e.message : "something went wrong on this computer.") + " Nothing was saved on the site."; }
+    pub.busy = false; pubPaint(); renderExports();
+  }
   function openExport(only) {
-    try { const m = JSON.parse(localStorage.getItem("ibasho-export") || "{}"); if (["pdf", "png", "jpeg"].includes(m.format)) ex.format = m.format; if (m.size === "web" || m.size === "full") ex.size = m.size; ex.sets = !!m.sets; } catch (e) { /* no memory of the last choice */ }
+    try { const m = JSON.parse(localStorage.getItem("ibasho-export") || "{}"); if (["pdf", "png", "jpeg", "print"].includes(m.format)) ex.format = m.format; if (["b5", "a5", "us"].includes(m.paper)) ex.paper = m.paper; if (m.size === "web" || m.size === "full") ex.size = m.size; ex.sets = !!m.sets; } catch (e) { /* no memory of the last choice */ }
     ex.picked = new Set(only != null ? [only] : spec.pages.map((_, i) => i));
     $("exDlgT").textContent = only != null ? "Export this page" : "Export the chapter";
     $("exPages").innerHTML = spec.pages.map((p, i) => `<button type="button" class="btn" data-i="${i}" title="${R.esc(p.label || "Page " + exLabel(p, i))}">${R.esc(exLabel(p, i))}</button>`).join("");
@@ -2150,7 +2565,7 @@
   }
   async function runExport() {
     const idx = [...ex.picked].sort((a, b) => a - b), whole = idx.length === spec.pages.length, go = $("exGo");
-    try { localStorage.setItem("ibasho-export", JSON.stringify({ format: ex.format, size: ex.size, sets: ex.sets })); } catch (e) { /* not kept */ }
+    try { localStorage.setItem("ibasho-export", JSON.stringify({ format: ex.format, size: ex.size, sets: ex.sets, paper: ex.paper })); } catch (e) { /* not kept */ }
     ex.busy = true; exPaint();
     try {
       if (whole) await fetch("/api/exports?p=" + encodeURIComponent(proj.id), { method: "DELETE" }); // pages left over from a longer storyboard go
@@ -2165,7 +2580,8 @@
       const q = new URLSearchParams({ p: proj.id, format: ex.format, size: ex.size, title: `${spec.project} · Chapter ${spec.chapter}` });
       if (!whole) q.set("pages", idx.map((i) => i + 1).join(","));
       if (spec.reading === "rtl") q.set("rtl", "1");
-      if (ex.sets && ex.format !== "pdf" && idx.length > 1) q.set("sets", "20");
+      if (ex.sets && ex.format !== "pdf" && ex.format !== "print" && idx.length > 1) q.set("sets", "20");
+      if (ex.format === "print") q.set("paper", ex.paper);
       const r = await fetch("/api/export-file?" + q); if (!r.ok) throw new Error(await r.text());
       const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || proj.id + "." + ex.format;
       const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob()); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
@@ -2182,7 +2598,17 @@
     if (!list.length || mode !== "chapter") return;
     box.hidden = false;
     box.innerHTML = `<div class="chap-top"><div><h2>Exported pages</h2><p>${list.length} page${list.length === 1 ? "" : "s"}, last exported ${R.esc(new Date(Math.max(...list.map((f) => f.at))).toLocaleString())}. Tap one to open it. Export gives them as a PDF, PNGs or JPEGs.</p></div></div>` +
+      `<p class="hint" id="exMoire" hidden></p>` +
       `<div class="exp-grid">${list.map((f) => `<a href="${R.esc(f.url)}" target="_blank" rel="noopener"><img src="${R.esc(f.url)}?t=${f.at}" alt="${R.esc(f.name)}" loading="lazy"><span>${R.esc(f.name)}</span></a>`).join("")}</div>`;
+    if (bible && bible.colour) return; // screentone is a black-and-white matter
+    // the measured moire test: every exported page is looked at for a second set of dots lying over the first
+    const want = proj.id; let m = null; try { const r = await fetch("/api/exports/moire?p=" + encodeURIComponent(want)); if (r.ok) m = await r.json(); } catch (e) { return; }
+    const note = $("exMoire"); if (!note || want !== proj.id || !Array.isArray(m) || !m.some((x) => x.tiles)) return; // nothing with dots was exported: nothing to say
+    const bad = m.filter((x) => x.moire), no = (x) => +(/(\d+)/.exec(x.name) || [0, 0])[1];
+    note.hidden = false; note.dataset.moire = bad.length ? "1" : "0";
+    note.textContent = bad.length
+      ? `Moire measured on ${bad.length === 1 ? "page" : "pages"} ${bad.map(no).join(", ")}: two sets of dots lie over each other there (${bad.map((x) => `page ${no(x)}: a pattern about every ${Math.round(x.every_px)} px`).join("; ")}). The usual causes: dots drawn into a picture under the Toner's (draw it again with flat greys), or pages toned with two sizes of dot (tone every page again).`
+      : `Measured for moire: none found on ${m.filter((x) => x.tiles).length} page${m.filter((x) => x.tiles).length === 1 ? "" : "s"} with screentone.`;
   }
   async function exportPng() {
     const btn = $("exportBtn"); btn.disabled = true; const label = btn.textContent; btn.textContent = "Exporting…";
@@ -2351,6 +2777,7 @@
     $("pjob").addEventListener("change", (e) => panelField((b) => { if (e.target.value) b.job = e.target.value; else delete b.job; }));
     $("pweight").addEventListener("click", (e) => { const s = e.target.closest("[data-pw]"); if (s) panelField((b) => { b.weight = +s.dataset.pw; }); });
     $("pface").addEventListener("change", (e) => panelField((b) => { if (e.target.checked) b.face = "big"; else delete b.face; }));
+    $("ptension").addEventListener("change", (e) => panelField((b) => { const D = window.Director; if (e.target.value && D && D.TENSION && D.TENSION[e.target.value]) b.tension = e.target.value; else delete b.tension; }));
     $("preveal").addEventListener("change", (e) => panelField((b) => { if (e.target.checked) b.reveal = true; else delete b.reveal; }));
     $("tmplPick").addEventListener("click", () => applyTemplate("", true));
     $("psplash").addEventListener("change", (e) => { if (!selP) return; const pid = selP, old = aiPrompt(pid), on = e.target.checked;
@@ -2410,6 +2837,8 @@
       selP = null;
     }));
     $("tonePage").addEventListener("click", () => tonePages([page()]));
+    $("toneWholeBtn").addEventListener("click", () => tonePages([page()]));
+    $("toneSet").addEventListener("change", (e) => saveToneSet(e.target.value));
     $("toneOne").addEventListener("click", () => tonePages([page()], selP));
     $("toneAllBtn").addEventListener("click", () => tonePages(spec.pages));
     $("toneHand").addEventListener("click", openToneHand);
@@ -2500,7 +2929,18 @@
     $("guidesChk").addEventListener("change", (e) => { guides = e.target.checked; render(); });
     $("exportBtn").addEventListener("click", () => (store.kind === "local" && proj && proj.id ? openExport(mode === "chapter" ? undefined : pageIdx) : exportPng())); // away from the app's own server there is one PNG, as before
     $("exportAllBtn").addEventListener("click", () => openExport());
+    $("publishBtn").addEventListener("click", () => openPublish());
+    $("pubCancel").addEventListener("click", () => { if (!pub.busy) $("pubDlg").close(); });
+    $("pubDlg").addEventListener("cancel", (e) => { if (pub.busy) e.preventDefault(); });
+    $("pubSave").addEventListener("click", pubSaveSettings);
+    $("pubTest").addEventListener("click", async () => { pub.busy = true; pubPaint(); $("pubSetNote").textContent = "Asking the site…"; await pubGet("/api/publish/test", { method: "POST" }); pub.busy = false; await pubLoad(); });
+    $("pubForget").addEventListener("click", async () => { if (!confirm("Forget the publishing key on this computer? The key itself still works until you cancel it on the site.")) return; await pubGet("/api/publish", { method: "DELETE" }); await pubLoad(); });
+    $("pubBook").addEventListener("change", () => { pubSuggest(); pubPaint(); });
+    $("pubNumber").addEventListener("input", () => { $("pubNumber").dataset.typed = "1"; pubTitleFollows(); pubPaint(); });
+    $("pubTitle").addEventListener("input", () => { $("pubTitle").dataset.typed = "1"; pubPaint(); });
+    $("pubGo").addEventListener("click", () => runPublish(false));
     $("exFormat").addEventListener("click", (e) => { const b = e.target.closest("[data-format]"); if (b) { ex.format = b.dataset.format; exPaint(); } });
+    $("exPaper").addEventListener("click", (e) => { const b = e.target.closest("[data-paper]"); if (b) { ex.paper = b.dataset.paper; exPaint(); } });
     $("exSize").addEventListener("click", (e) => { const b = e.target.closest("[data-size]"); if (b) { ex.size = b.dataset.size; exPaint(); } });
     $("exPages").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (!b) return; const i = +b.dataset.i; if (ex.picked.has(i)) ex.picked.delete(i); else ex.picked.add(i); exPaint(); });
     $("exAll").addEventListener("click", () => { ex.picked = new Set(spec.pages.map((_, i) => i)); exPaint(); });
@@ -2561,7 +3001,7 @@
     const res = await fetch(SPEC_URL);
     spec = prepare(await res.json());
     original = JSON.parse(JSON.stringify(spec));
-    hist = [JSON.stringify(spec)]; redo = []; edited = false; dirty = false;
+    hist = [JSON.stringify(spec)]; redo = []; edited = false; dirty = false; savedFor = ""; // the built chapter is on screen until the saved edits are loaded
     pageIdx = 0; sel = -1; selP = null; drafts = {}; savedPages = {};
     bible = await fetch(f.dir + "bible.json").then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (syncReading()) hist = [JSON.stringify(spec)]; // the series' direction was changed from another chapter
@@ -2608,7 +3048,7 @@
     STYLES = await fetch(store.kind === "local" ? "/api/styles" : "core/styles.json").then((r) => (r.ok ? r.json() : [])).catch(() => []); // with the person's own styles on their computer
     { const saved = (() => { try { return localStorage.getItem("ld-project"); } catch (e) { return null; } })(), f = PROJECTS.find((q) => q.id === saved); proj = f || PROJECTS[0] || NO_PROJECT; }
     $("projSel").innerHTML = PROJECTS.map((q) => `<option value="${q.id}">${R.esc(q.label)}</option>`).join("");
-    wire(); wireHome(); wireSeries();
+    wire(); wireHome(); wireSeries(); wireStills();
     const fontLoads = [["Playpen Sans", 500], ["Playpen Sans", 800], ["Bangers", 400], ["Vollkorn", 500], ["Vollkorn", 700], ["Patrick Hand", 400], ["Comic Neue", 700], ["Kalam", 700]]
       .map(([f, w]) => document.fonts.load(`${w} 30px '${f}'`).catch(() => null));
     await Promise.all(fontLoads);

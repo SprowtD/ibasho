@@ -162,7 +162,7 @@ const newId = () => "p" + Math.random().toString(36).slice(2, 8);
 const panelBrief = (q) => ({ id: q.id, drawn: !!q.image, image: q.image || null, queued: !!q.request, type: q.type || "framed",
   shot: q.board?.shot, angle: q.board?.angle, bg: q.board?.bg, action: q.board?.action || "", who: (q.board?.who || []).map((w) => w.name),
   lines: (q.board?.lines || []).map((l) => `${l.speaker || l.kind || "caption"}: ${l.text}`), note: q.board?.note, splash: q.board?.splash || undefined,
-  job: q.board?.job, weight: q.board ? Director.weightOf(q.board) : undefined, face: q.board?.face, reveal: q.board?.reveal || undefined });
+  job: q.board?.job, weight: q.board ? Director.weightOf(q.board) : undefined, face: q.board?.face, tension: q.board?.tension, reveal: q.board?.reveal || undefined });
 function pageChecks(ch, page) {
   const measured = (page.text || []).map((it) => R.measure(it, ch.spec, measureText));
   const out = R.check(page, measured, R.protectBoxes(page, libOf(ch.spec))).map((r) => ({ level: r.level, about: r.i >= 0 ? R.plain(page.text[r.i].text).slice(0, 40) : "page", msg: r.msg }));
@@ -302,7 +302,7 @@ tool("get_chapter", "A chapter page by page: every panel's id, what happens in i
 tool("get_page", "One page in full: its layout (rows, widths, heights, slants), each panel's storyboard, and every balloon with its position.", { project: PROJECT, page: { description: "Page number (from 1) or page id" } }, ["project", "page"], async (a) => {
   const ch = await loadChapter(a.project), p = pageOf(ch, a.page);
   return { id: p.id, label: p.label, note: p.note, reads: READS[readingOf(ch)], layout: p.layout, panels_in_reading_order: p.layout ? R.allPanels(p.layout).map((c) => ({ ...panelBrief(c.panel), box: c.bbox.map((v) => Math.round(v)), board: c.panel.board, request: c.panel.request && { status: c.panel.request.status, model: c.panel.request.modelName } })) : [],
-    plan: p.layout ? R.planFor(p) : [], balloons: (p.text || []).map((it, i) => ({ index: i, ...it })), page_size: [R.W, R.H], templates: (ch.spec.templates || []).map((t) => `${t.code} ${t.name}`).slice(0, 400) };
+    plan: p.layout ? R.planFor(p) : [], balloons: (p.text || []).map((it, i) => ({ index: i, ...it })), page_size: [R.W, R.H], templates: Director.withFullPage(ch.spec.templates || []).map((t) => `${t.code} ${t.name}`).slice(0, 400) };
 });
 
 // ----- manga: changing one page
@@ -344,18 +344,19 @@ tool("set_layout", "Lay one page out again by hand. rows = [{h, slant?, panels:[
     const alive = new Set(panelsOf(p).map((q) => q.id)); for (const it of p.text || []) if (it.panel && !alive.has(it.panel)) delete it.panel;
     await saveChapter(ch); return { page: p.id, panels: R.allPanels(p.layout).map((c) => ({ id: c.panel.id, box: c.bbox.map((v) => Math.round(v)) })), new_panels: made, next: "Balloons kept their old places: run letter_pages on this page, then view_page." };
   });
-tool("apply_template", "Put a page's panels into one of the ready-made layouts (codes are listed by get_page). Panels go in, in reading order; the template must have the same number of panels. LEAVE `code` OUT and the panel director picks the layout by the panels' weights (the heaviest panel becomes the biggest, no even grid, never the layout of the page before or after): set jobs and weights with edit_panel first. Either way the sizes are pulled toward the weights. On a right-to-left chapter the template is mirrored with the page.",
+tool("apply_template", "Put a page's panels into one of the ready-made layouts (codes are listed by get_page). Panels go in, in reading order; the template must have the same number of panels. A page of ONE panel has two: L1-01 (the whole page inside the margins, with a border) and L1-02 (to the page's edges, no border: for the splash). LEAVE `code` OUT and the panel director picks the layout by the panels' weights (the heaviest panel becomes the biggest, no even grid, never the layout of the page before or after): set jobs and weights with edit_panel first. Either way the sizes are pulled toward the weights. On a right-to-left chapter the template is mirrored with the page.",
   { project: PROJECT, page: {}, code: S }, ["project", "page"],
   async (a) => {
     const ch = await loadChapter(a.project), p = pageOf(ch, a.page); if (!p.layout) throw new Stop("This page is one whole picture.");
     const panelsNow = leaves(p.layout.rows), i0 = ch.spec.pages.indexOf(p), near = [ch.spec.pages[i0 - 1], ch.spec.pages[i0 + 1]].filter((q) => q && q.layout && !q.cover).map((q) => Director.shape(q.layout.rows));
-    const ranked = panelsNow.length > 1 ? Director.sorted(panelsNow, ch.spec.templates || [], R, { avoid: near }) : [], hit = a.code ? ranked.find((x) => x.template.code === a.code) : ranked[0];
+    const all = Director.withFullPage(ch.spec.templates || []), wasFull = Director.fullBleed(p.layout.rows) && !p.cover;
+    const ranked = panelsNow.length > 1 || (panelsNow.length === 1 && !p.cover) ? Director.sorted(panelsNow, all, R, { avoid: near }) : [], hit = a.code ? ranked.find((x) => x.template.code === a.code) : ranked[0];
     if (!a.code && !hit) throw new Stop(`No ready-made layout has ${panelsNow.length} panels. Use set_layout.`);
-    const t = hit ? { code: hit.template.code, name: hit.template.name, rows: hit.rows } : (ch.spec.templates || []).find((q) => q.code === a.code);
+    const t = hit ? { code: hit.template.code, name: hit.template.name, rows: hit.rows } : all.find((q) => q.code === a.code);
     if (!t) throw new Stop(`There is no template "${a.code}".`);
     const mine = R.allPanels(p.layout).filter((c) => !(p.layout.insets || []).includes(c.panel)).map((c) => c.panel), slots = leaves(clone(t.rows));
-    if (slots.length !== mine.length) throw new Stop(`Template ${a.code} has ${slots.length} panels and this page has ${mine.length}. Pick one with ${mine.length}: ${(ch.spec.templates || []).filter((q) => leaves(q.rows).length === mine.length).slice(0, 40).map((q) => q.code).join(", ")}.`);
-    const rows = clone(t.rows); let i = 0; eachPanel(rows, (q) => { if (!q.rows) { const o = mine[i++]; for (const k of Object.keys(o)) if (k !== "w" && k !== "slant") q[k] = o[k]; } });
+    if (slots.length !== mine.length) throw new Stop(`Template ${a.code} has ${slots.length} panels and this page has ${mine.length}. Pick one with ${mine.length}: ${all.filter((q) => leaves(q.rows).length === mine.length).slice(0, 40).map((q) => q.code).join(", ")}.`);
+    const rows = clone(t.rows); let i = 0; eachPanel(rows, (q) => { if (!q.rows) { const o = mine[i++]; const kind = q.type || (wasFull ? "framed" : o.type); for (const k of Object.keys(o)) if (k !== "w" && k !== "slant") q[k] = o[k]; if (kind) q.type = kind; } }); // a full-page layout says whether the panel runs to the page's edges
     p.layout.rows = rows; await saveChapter(ch); return { page: p.id, template: t.code + " " + t.name, picked_by_weight: !a.code || undefined, why_not_perfect: hit && hit.why.length ? hit.why : undefined, next: "Run letter_pages on this page, then view_page." };
   });
 tool("split_page", "Spread a crowded page over two: the panels after `after_panel` (in reading order) move to a new page right after it. Nothing else in the chapter changes.",

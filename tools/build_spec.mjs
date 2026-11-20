@@ -5,9 +5,9 @@
 //     chapter made before 19 Nov 2026 does. The choice is written to spec.reading and to every page's layout (layout.rtl).
 //   script.json  { title?, beats: [{ id, type: "scene"|"action"|"line", speaker?, text, paren? }] }   (line ids like L001)
 //   board.json   { cast: [{name, desc}], pages: [{ note, panels: [ panel, … ] }  |  { note, rows: [{ h, panels: [ panel | { w, rows } ] }] }] }
-//     panel = { job?, weight?, shot, angle?, bg?, action, who?: [{name, at:[x,y], size, facing}], lines?: [{id, kind?, parts?, off?}], note?, art?, face?, reveal?, splash?, w? }
+//     panel = { job?, weight?, shot, angle?, bg?, action, who?: [{name, at:[x,y], size, facing}], lines?: [{id, kind?, parts?, off?}], note?, art?, face?, reveal?, splash?, sfx?, shape?, w? }
 //     A page given as a flat list of `panels` (in reading order) is laid out here by the panel director (core/director.js):
-//     the layout is picked from the templates by the panels' weights. A page given as `rows` keeps its hand-made layout.
+//     the layout is picked from the templates and the person's own saved layouts by the panels' weights. A page given as `rows` keeps its hand-made layout.
 // Lines are always taken word for word from script.json: the board only says where each one goes.
 import fs from "node:fs"; import path from "node:path"; import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
@@ -25,10 +25,17 @@ const warn = [];
 let reading = meta.reading === "rtl" ? "rtl" : "ltr";
 try { const b = JSON.parse(fs.readFileSync(path.join(dir, "bible.json"), "utf8")); if (b.reading === "rtl" || b.reading === "ltr") reading = b.reading; } catch { /* no series settings yet */ }
 const rtl = reading === "rtl";
+// where the series is read: "phone" (the default: X, a reading site) or "print". It sets the panels-a-page advice (core/paneler.js).
+let readOn = meta.read_on === "print" ? "print" : "phone";
+try { const b = JSON.parse(fs.readFileSync(path.join(dir, "bible.json"), "utf8")); if (b.read_on === "print" || b.read_on === "phone") readOn = b.read_on; } catch { /* no series settings yet */ }
 const KIND = new Set(["speech", "shout", "whisper", "thought", "caption", "ambient", "crowd", "phone", "title"]);
 const num = (v, d, lo, hi) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : d);
 
 const templates = JSON.parse(fs.readFileSync(path.join(APP, "page-editor/templates.json"), "utf8")); // the page layouts every project starts with
+// The person's own layouts (saved on this computer, "Save this page's layout as mine") are offered to the director too, first, so that
+// of two layouts that fit a page equally well theirs is the one picked. They are not written into the project: the editor reads them itself.
+let own = []; try { const j = JSON.parse(fs.readFileSync(path.join(process.env.STUDIO_SAVED || path.join(APP, "page-editor/saved"), "layouts.json"), "utf8")); own = (j.layouts || []).filter((t) => t && t.code && Array.isArray(t.rows)); } catch { /* none saved, or not readable: the ready-made ones are used */ }
+const offered = own.concat(templates);
 function panel(q) {
   if (Array.isArray(q.rows) && q.rows.length) return { w: num(q.w, 1, 0.05, 20), rows: q.rows.map(row) };
   const lines = [];
@@ -53,19 +60,23 @@ function panel(q) {
   if (Director.JOBS[q.job]) b.job = q.job; // what the panel is for, and how much of the page it should own (core/director.js)
   if (Number.isFinite(+q.weight) && +q.weight > 0) b.weight = Math.min(5, Math.max(1, Math.round(+q.weight)));
   if (q.face === "big") b.face = "big"; // the one big expression of its page
+  if (Director.TENSION[q.tension]) b.tension = q.tension; // how tense the beat is: the camera follows it (core/director.js TENSION)
   if (q.reveal === true) b.reveal = true; // the surprise: belongs first on its page
   if (q.splash === true) b.splash = true;
   if (q.note) b.note = String(q.note);
   if (q.art) b.art = String(q.art);
   if (Array.isArray(q.src) && q.src.length) b.src = q.src.map(String);
+  if (typeof q.shape === "string" && Object.hasOwn(R.SHAPES, q.shape)) b.shape = q.shape; // a panel shape of its own (slant, jagged, burst, oval): put on the panel once the page is laid out
+  if (R.sfxWord(q.sfx)) b.sfx = R.sfxWord(q.sfx); // a sound effect lettered across the picture (huge letters, no balloon): the Letterer places it
   if (q.breakout && String(q.breakout).trim()) b.breakout = String(q.breakout).trim().slice(0, 300); // what should stand above this panel's borders: offered in Layout as a break-out to add
   return { w: num(q.w, 1, 0.05, 20), type: "framed", board: b };
 }
 function row(r) { return { h: num(r.h, 1, 0.05, 20), panels: (r.panels || []).map(panel) }; }
 
-const spec = { project: meta.name || "Untitled", chapter: meta.chapter || 1, kind: "storyboard", reading, voices: {}, styles: {}, library: [], templates,
+const spec = { project: meta.name || "Untitled", chapter: meta.chapter || 1, kind: "storyboard", reading, read_on: readOn, voices: {}, styles: {}, library: [], templates,
   script: beats.map((b) => { const o = {}; for (const k of ["id", "type", "speaker", "text", "source_id", "paren", "src"]) if (b[k] != null) o[k] = b[k]; return o; }), pages: [] };
 // when the storyboard itself is replaced, the editor starts the pages fresh instead of laying old saved pages over it
+if (meta.story && meta.story.from_idea) spec.story = meta.story; // a chapter the Writer wrote from an idea: its notes feed the original-story advice (core/paneler.js)
 spec.boardAt = fs.existsSync(path.join(dir, "board.json")) ? fs.statSync(path.join(dir, "board.json")).mtime.toISOString() : "";
 const src = board.pages.length ? board.pages : [{ note: "", rows: [{ h: 1, panels: [{ w: 1, shot: "wide", action: "" }] }] }]; // an empty project still opens
 // Hard limits on a page (the same numbers as core/paneler.js LIMITS and the Paneler's task): a storyboard over them is sent back.
@@ -75,12 +86,13 @@ src.forEach((pg, i) => {
   const nn = String(i + 1).padStart(2, "0");
   let rows;
   if (!Array.isArray(pg.rows) && Array.isArray(pg.panels) && pg.panels.length) { // a flat list: the director picks the layout by weight, never the same as the page before
-    const got = Director.layout(pg.panels.map(panel), templates, R, { avoid: prevShapes });
+    const got = Director.layout(pg.panels.map(panel), offered, R, { avoid: prevShapes });
     rows = got.rows; directed.push(`${i + 1}:${got.code}`);
   } else rows = (pg.rows || []).map(row).filter((r) => r.panels.length);
   prevShapes = [Director.shape(rows)];
   let n = 0; const said = new Set(); let words = 0;
   const ids = (rs) => { for (const r of rs) for (const q of r.panels) { if (q.rows) { ids(q.rows); continue; } q.id = `b${nn}-n${++n}`;
+    if (q.board.shape && !R.validShape(q.shape) && !r.strip) q.shape = R.SHAPES[q.board.shape].make(); // the storyboard asked for this shape; a layout's own shape for the place, or a strip of tiny panels, wins
     if (q.board.lines.length > 3 && new Set(q.board.lines.map((l) => l.source_id)).size > 3) faults.push(`Page ${i + 1}, panel ${n}: more than 3 balloons in one panel.`);
     for (const l of q.board.lines) { if (!seenLine.has(l.source_id)) seenLine.set(l.source_id, i + 1); if (l.kind === "title") continue; said.add(l.source_id); words += norm(l.text).split(" ").filter(Boolean).length; if (!seenLine.has(l.source_id)) seenLine.set(l.source_id, i + 1); } } };
   ids(rows);

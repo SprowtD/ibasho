@@ -79,6 +79,34 @@ try {
   // the lettered page, the chapter screen and a page step keep it
   await page.click('#modeTabs [data-mode="letter"]');
   ok((await page.locator('#page image[href*="art/breakouts/"]').count()) === 1 && (await page.locator("#page rect.phit[data-bo]").count()) === 0, "it shows in Lettering too, and cannot be moved there");
+  // the Letterer keeps balloons off it
+  const specNow = async () => { await page.waitForTimeout(2600); return (await fetch(`${U}/api/spec?p=${ID}`)).json(); };
+  await page.evaluate(() => document.getElementById("letterAllBtn").click()); // on the Chapter screen
+  let sp = await specNow(); const pg = sp.pages.find((q) => q.layout && (q.layout.breakouts || []).length), bx = pg.layout.breakouts[0].box, bw = bx[2] - bx[0], bh = bx[3] - bx[1];
+  const zone = [bx[0] + bw * 0.12, bx[1] + bh * 0.05, bx[2] - bw * 0.12, bx[3] - bh * 0.05], under = (pg.text || []).filter((it) => it.at[0] > zone[0] && it.at[0] < zone[2] && it.at[1] > zone[1] && it.at[1] < zone[3]);
+  ok((pg.text || []).length > 0 && under.length === 0, `the Letterer puts no balloon on the break-out (${(pg.text || []).length} balloons on its page, ${under.length} on the figure)`);
+  await page.click('#modeTabs [data-mode="letter"]');
+  ok(!/red zone/.test(await page.textContent("#checks").catch(() => "")), "and the page's checks do not complain of a covered figure");
+  // "Draw the missing pictures" counts and draws a break-out that has no picture
+  await page.goto("about:blank"); await new Promise((r) => setTimeout(r, 1500)); // the screen is closed first, so its own last save cannot undo the change below
+  sp = await (await fetch(`${U}/api/spec?p=${ID}`)).json();
+  sp.pages.find((q) => q.layout && (q.layout.breakouts || []).length).layout.breakouts.push({ id: "botest2", who: "Mara", action: "Waving from the rail.", box: [0.6, 0.6, 0.9, 0.9] }); // asked for, never drawn
+  const put = (await fetch(`${U}/api/spec?p=${ID}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(sp) })).status;
+  await page.goto(U + "/"); await page.waitForSelector("#projSel option", { state: "attached" });
+  await page.evaluate((id) => { document.getElementById("projSel").value = id; document.getElementById("projSel").dispatchEvent(new Event("change", { bubbles: true })); }, ID);
+  await page.waitForFunction(() => /pages/.test(document.getElementById("sbProj").textContent));
+  const panelsMissing = sp.pages.reduce((n, q) => n + (q.layout ? JSON.stringify(q.layout.rows).split('"id"').length - 1 - (JSON.stringify(q.layout.rows).split('"image"').length - 1) : 0), 0);
+  await page.waitForFunction(() => !document.getElementById("drawAllBtn").hidden, null, { timeout: 8000 }).catch(() => {}); // it shows only once the person's saved pages are loaded, so its count is never of the built chapter
+  const label = await page.textContent("#drawAllBtn");
+  ok(put === 200 && +/(\d+)/.exec(label)[1] === panelsMissing + 1, `the count of missing pictures includes the break-out: "${label}" (${panelsMissing} panels + 1)`);
+  const told = await page.evaluate(() => { document.getElementById("drawAllBtn").click(); return document.getElementById("status").textContent; }); // read at once: "Saved" follows it
+  ok(/1 break-out is drawn too|Drawing 1 break-out/.test(told), "it says the break-out is drawn too: " + told);
+  await page.waitForTimeout(2500);
+  ok(/break-out/.test(await page.textContent("#status")), "the save that follows does not wipe that news off the status line: " + await page.textContent("#status"));
+  let third = false; for (let i = 0; i < 240 && !third; i++) { third = fs.readdirSync(bdir).some((n) => /^botest2-take01\.png$/.test(n)); if (!third) await page.waitForTimeout(500); }
+  ok(third, "the break-out is drawn with the missing pictures (its first take is saved)");
+  await page.waitForSelector('#page image[href*="botest2-take01.png"], #side image[href*="botest2-take01.png"]', { state: "attached", timeout: 30000 }).catch(() => {});
+  ok((await specNow()).pages.some((q) => q.layout && (q.layout.breakouts || []).some((x) => x.id === "botest2" && /botest2-take01\.png$/.test(x.image || ""))), "and it lands on its page by itself");
   ok(errors.length === 0, "no script errors: " + errors.join(" | "));
 } finally {
   if (browser) await browser.close();

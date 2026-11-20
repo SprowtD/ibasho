@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/ibasho-mark.svg" type="image/svg+xml">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Library · Ibasho</title>
+<style>
+  body { margin: 0; }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 18px 16px 80px; }
+  h2 { font-size: 1.35rem; margin: 4px 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 12px; max-width: 70ch; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 0 0 6px; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 8px 0; }
+  .bar input[type=search] { flex: 1 1 240px; min-width: 0; min-height: 40px; padding: 6px 12px; border: 1px solid var(--line-2, var(--line)); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+  .bar .segs { display: inline-flex; flex-wrap: wrap; }
+  .bar .seg { min-height: 36px; padding: 4px 12px; }
+  #count { color: var(--muted); margin: 0 0 10px; font-size: .9rem; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 46%), 1fr)); gap: 12px; }
+  .it { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: inherit; text-decoration: none; overflow: hidden; }
+  .it:hover, .it:focus-visible { border-color: var(--accent, var(--ink)); outline: none; }
+  .it .pic { position: relative; aspect-ratio: 4 / 3; background: var(--bg); display: grid; place-items: center; overflow: hidden; }
+  .it .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .it .pic .none { color: var(--muted); font-size: .8rem; }
+  .it .badge { position: absolute; top: 6px; left: 6px; font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: rgb(0 0 0 / .66); color: #fff; }
+  .it .txt { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .it b { font-size: .86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .it small { color: var(--muted); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .it p { margin: 2px 0 0; font-size: .8rem; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #more { margin: 16px auto 0; display: block; }
+  @media (max-width: 760px) { .wrap { padding-bottom: 120px; } .bar { position: static; } } /* on a phone the bar is four rows tall: it scrolls away with the page */
+</style>
+<link rel="stylesheet" href="/studio.css?v=13">
+<script src="/studio.js?v=10"></script>
+</head>
+<body>
+<header class="appbar">
+  <a class="brand" href="/#home"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><filter id="ibs-wear"><feTurbulence baseFrequency="1.6" numOctaves="2" seed="3"/><feDisplacementMap in="SourceGraphic" scale="0.55"/></filter><mask id="ibs-cut"><rect width="24" height="24" fill="#fff"/><path d="M2 10.2h11.2V2M12.8 22v-8.2H22" fill="none" stroke="#000" stroke-width="1.6"/></mask></defs><g filter="url(#ibs-wear)"><rect x="2" y="2" width="20" height="20" rx="2.4" fill="currentColor" mask="url(#ibs-cut)"/></g></svg>Ibasho</a>
+  <nav class="ws" aria-label="Workspace">
+    <a class="wsb" href="/#home">Home</a>
+    <a class="wsb" href="/">Manga</a>
+    <a class="wsb" href="/anime/#/">Anime</a>
+    <a class="wsb" href="/create">Create</a>
+    <a class="wsb" href="/library" aria-current="page">Library</a>
+  </nav>
+  <span class="spacer"></span>
+  <button class="iconbtn" id="settingsBtn" type="button" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.8"/></svg></button>
+  <button class="iconbtn" id="themeBtn" type="button"></button>
+</header>
+
+
+<main class="wrap">
+  <h2>Library</h2>
+  <p class="lede">Every picture and video made here, from every manga chapter, every anime scene and Create. Tap one to open it where it lives. Nothing here is moved, copied or deleted.</p>
+  <div class="bar">
+    <input type="search" id="find" placeholder="Find: a project, a panel or shot, words it was made from, a name" aria-label="Find in the Library" autocomplete="off">
+    <div class="segs" id="kinds" role="group" aria-label="Kind"></div>
+    <div class="segs" id="sources" role="group" aria-label="Made in"></div>
+    <button class="btn" id="again" type="button" title="Read the folders again now (the list is read at most every 15 seconds)">Look again</button>
+  </div>
+  <p id="count" role="status" aria-live="polite">Loading…</p>
+  <div id="grid"></div>
+  <button class="btn" id="more" type="button" hidden>Show more</button>
+</main>
+<footer class="statusbar"><span class="status" id="status" role="status" aria-live="polite"></span></footer>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id), esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const PAGE = 60, st = { q: "", kind: "", source: "", from: 0, asked: 0 };
+  try { const k = JSON.parse(localStorage.getItem("ibasho-library") || "{}"); if (["picture", "video"].includes(k.kind)) st.kind = k.kind; if (["manga", "anime", "create"].includes(k.source)) st.source = k.source; } catch (e) { /* not kept */ }
+  const ago = (iso) => { const t = Date.parse(iso); if (!isFinite(t)) return ""; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : m < 43200 ? Math.round(m / 1440) + " d ago" : new Date(t).toLocaleDateString(); };
+  const hrefOf = (o) => (o.type === "anime" ? "/anime/#/scene/" + encodeURIComponent(o.scene) : o.type === "create" ? "/create" : "/");
+  const PLACE = { manga: "Manga", anime: "Anime", create: "Create" };
+  function tile(it) {
+    const pic = it.thumb ? `<img src="${esc(it.thumb)}" alt="" loading="lazy" decoding="async">` : `<span class="none">${it.kind === "video" ? "video" : "no preview"}</span>`;
+    return `<a class="it" href="${esc(hrefOf(it.open))}" data-key="${esc(it.key)}"${it.open.type === "manga" ? ` data-project="${esc(it.open.project)}"` : ""} title="Open in ${esc(PLACE[it.source])}: ${esc(it.from)}">` +
+      `<span class="pic">${pic}<span class="badge">${it.kind === "video" ? "Video" : "Picture"}</span></span>` +
+      `<span class="txt"><b>${esc(it.from)}</b><small>${esc(PLACE[it.source])} · ${esc(it.where)}${it.at ? " · " + esc(ago(it.at)) : ""}</small>${it.words ? `<p>${esc(it.words)}</p>` : ""}${(it.cast || []).length ? `<small>${esc(it.cast.join(", "))}</small>` : ""}</span></a>`;
+  }
+  function segs(c) {
+    const seg = (group, v, label, n) => `<button type="button" class="seg" data-${group}="${v}" aria-pressed="${st[group] === v}">${label}${n != null ? " " + n : ""}</button>`;
+    $("kinds").innerHTML = seg("kind", "", "All", c.all) + seg("kind", "picture", "Pictures", c.picture) + seg("kind", "video", "Videos", c.video);
+    $("sources").innerHTML = seg("source", "", "Everywhere") + seg("source", "manga", "Manga", c.manga) + seg("source", "anime", "Anime", c.anime) + seg("source", "create", "Create", c.create);
+  }
+  async function load(more, fresh) {
+    if (!more) st.from = 0;
+    const mine = ++st.asked, qs = new URLSearchParams({ q: st.q, kind: st.kind, source: st.source, from: String(st.from), n: String(PAGE) }); if (fresh) qs.set("fresh", "1");
+    let d; try { const r = await fetch("/api/library?" + qs); d = await r.json(); if (!r.ok) throw new Error(d.error || "error"); } catch (e) { if (mine === st.asked) $("count").textContent = "The Library could not be loaded. " + (e.message || ""); return; }
+    if (mine !== st.asked) return; // a newer search has been asked since
+    segs(d.counts);
+    const html = d.items.map(tile).join("");
+    if (more) $("grid").insertAdjacentHTML("beforeend", html); else $("grid").innerHTML = html;
+    const shown = st.from + d.items.length, filtered = st.q || st.kind || st.source;
+    $("count").textContent = !d.counts.all ? "Nothing has been made yet. Pictures and videos show here as soon as they land."
+      : !d.total ? "Nothing by that name. Try fewer words, or All and Everywhere."
+      : `${shown} of ${d.total} shown${filtered ? ` (${d.counts.all} in the whole Library)` : ""}.`;
+    $("more").hidden = !d.more; st.from = shown;
+  }
+  let timer = null;
+  $("find").addEventListener("input", (e) => { st.q = e.target.value; clearTimeout(timer); timer = setTimeout(() => load(false), 180); });
+  document.querySelector(".bar").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg"); if (!b) return;
+    if (b.dataset.kind != null) st.kind = b.dataset.kind; if (b.dataset.source != null) st.source = b.dataset.source;
+    try { localStorage.setItem("ibasho-library", JSON.stringify({ kind: st.kind, source: st.source })); } catch (err) { /* not kept */ }
+    load(false);
+  });
+  $("again").addEventListener("click", () => load(false, true));
+  $("more").addEventListener("click", () => load(true));
+  // a manga picture lives in its chapter: the editor opens the project named here
+  $("grid").addEventListener("click", (e) => { const a = e.target.closest("a.it[data-project]"); if (!a) return; try { localStorage.setItem("ld-project", a.dataset.project); } catch (err) { /* opens the last project instead */ } });
+  load(false);
+})();
+</script>
+</body>
+</html>

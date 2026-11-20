@@ -19,6 +19,8 @@ Characters:
 5. **Props they carry or wear:** the same object from panel to panel, and the same as its own sheet when it has one; held in the same hand when the panels are one moment.
 6. **Marks:** scars, glasses, jewellery, tattoos, freckles: present where the sheet has them, on the same side.
 
+7. **Staging** (only when the tile gives `storyboard_staging`): open the whole picture. The storyboard says who stands on which side of the panel and which way they face ("Mara on the right, facing left"). Fault when a person is on the other side, or faces away from the one they are talking to when the storyboard has them facing each other; within a scene people keep their side, so a swap between two panels of one exchange is the fault a reader feels as a jump. Small shifts toward the middle are not a fault.
+
 Places and props (their tiles are whole pictures): the same shape, parts, colours and layout as the sheet and as the other tiles.
 
 ## What is not a fault
@@ -45,4 +47,4 @@ One JSON file, at the path the task gives, and nothing else:
 }
 ```
 
-`about` is one of: `face`, `age`, `hair`, `outfit`, `hands`, `prop`, `mark`, `place`, `other`. `what` is written for the person who made the manga: plain words, the difference itself ("Her hoodie is green here; it is blue on the sheet and in tiles 1 to 4"), no advice.
+`about` is one of: `face`, `age`, `hair`, `outfit`, `hands`, `prop`, `mark`, `staging`, `place`, `other`. `what` is written for the person who made the manga: plain words, the difference itself ("Her hoodie is green here; it is blue on the sheet and in tiles 1 to 4"), no advice.

@@ -17,7 +17,7 @@ from scipy import ndimage as ndi
 
 APP = Path(__file__).resolve().parents[1]
 proj, num, src = Path(sys.argv[1]).resolve(), int(sys.argv[2]), Path(sys.argv[3]).resolve()
-art = proj / "art"
+art = proj / "art"; art.mkdir(parents=True, exist_ok=True)  # a project that has no drawn picture yet has no art folder
 PW, PH = 1024, 1536
 K = PW / 1000  # page units -> pixels
 
@@ -36,9 +36,11 @@ console.log(JSON.stringify({id:p.id, flat, rows:p.layout.rows.map(r=>r.panels.le
     str(APP / "page-editor/render.js"), str(proj / "spec.json"), str(num)]))
 cells = page["cells"]
 
-im = ImageOps.grayscale(Image.open(src).convert("RGB"))  # true grey: drop the model's faint tint
-if im.size != (PW, PH):
-    im = im.resize((PW, PH), Image.LANCZOS)
+full = Image.open(src).convert("RGB")
+if full.size != (PW, PH):
+    full = full.resize((PW, PH), Image.LANCZOS)
+im = ImageOps.grayscale(full)  # the panels are found in grey; a black-and-white series also keeps this true grey (it drops the model's faint tint)
+colour = json.loads((proj / "bible.json").read_text()).get("colour") if (proj / "bible.json").exists() else False  # a colour series keeps its colours, as tools/artist_panel.py does
 g = np.asarray(im)
 
 
@@ -103,7 +105,7 @@ else:
 
 faces = load("faces.json", {}).get(src.stem)
 lib, assign = load("library.json", []), load("assignments.json", {})
-rgb = im.convert("RGB")
+rgb = full if colour else im.convert("RGB")
 for i, (c, box) in enumerate(zip(cells, boxes), 1):
     bx0, by0, bx1, by1 = box
     name = f"p{num:02d}-panel{i}.jpg"
@@ -125,6 +127,11 @@ for i, (c, box) in enumerate(zip(cells, boxes), 1):
     assign[c["id"]] = {"image": entry["src"], "take": src.stem}
 (art / "library.json").write_text(json.dumps(lib, indent=1, ensure_ascii=False))
 (art / "assignments.json").write_text(json.dumps(assign, indent=1))
-subprocess.check_call(["/usr/bin/python3", str(APP / "tools/build_board.py")], stdout=subprocess.DEVNULL)
+# rebuild THIS project's pages. A project made in the app has its storyboard in board.json (tools/build_spec.mjs); only the old
+# hand-built sample is rebuilt by build_board.py. (Until 20 Nov 2026 that sample was rebuilt whatever project was cut.)
+if (proj / "board.json").exists():
+    subprocess.check_call(["node", str(APP / "tools/build_spec.mjs"), str(proj)], stdout=subprocess.DEVNULL)
+elif proj.parent == (APP / "page-editor/samples").resolve() and (APP / "tools/build_board.py").exists():  # the hand-built sample, where there is one
+    subprocess.check_call(["/usr/bin/python3", str(APP / "tools/build_board.py")], stdout=subprocess.DEVNULL)
 print(f"page {num}: {len(cells)} panels cut ({'on the drawn borders' if fitted or len(found) == len(cells) else 'on the guide'}; faces: {how})")
 print(json.dumps({"boxes": boxes, "fit": fit.get(page["id"])}))

@@ -17,7 +17,11 @@ const signedOut = (err) => /log ?in|not logged|unauthori[sz]ed|401|auth/i.test(e
 /** codex exec in `dir`. opts: { minutes, effort, sandbox: "workspace-write" | "read-only", last: file for the final message }. */
 export function codexRun(dir, prompt, { minutes = 15, effort = "", sandbox = "workspace-write", last = "" } = {}) {
   return new Promise((ok, bad) => {
-    const args = ["exec", "--skip-git-repo-check", "--sandbox", sandbox, ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []), "-C", dir, ...(last ? ["-o", last] : []), prompt];
+    // One agent does the whole job. Codex's multi-agent mode (on by itself since late 2026) hands part of a task to a helper agent and
+    // waits for it: a picture that was made in 14 seconds was then never saved inside the 15 minutes (seen 20 Nov 2026).
+    // STUDIO_CODEX_AGENTS=1 leaves Codex's own setting alone.
+    const solo = process.env.STUDIO_CODEX_AGENTS === "1" ? [] : ["-c", "features.multi_agent=false"];
+    const args = ["exec", "--skip-git-repo-check", "--sandbox", sandbox, ...solo, ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []), "-C", dir, ...(last ? ["-o", last] : []), prompt];
     const c = spawn("codex", args, { stdio: ["ignore", "ignore", "pipe"] });
     let err = ""; c.stderr.on("data", (d) => { err = (err + d).slice(-2000); });
     const t = setTimeout(() => { c.kill(); bad(new Error(`Codex took longer than ${minutes} minutes`)); }, minutes * 60000);

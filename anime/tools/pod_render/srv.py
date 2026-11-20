@@ -50,4 +50,6 @@ class H(h.BaseHTTPRequestHandler):
         P[j] = s.Popen(["bash", "-lc", d.decode()], stdout=open(J + "/" + j + ".log", "w"), stderr=s.STDOUT, cwd=os.path.dirname(J)); z.o(j.encode())
     def log_message(z, *a): pass
 
-h.ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", 8000))), H).serve_forever()
+# BIND: the address to listen on. Every address by default (RunPod's https proxy has to reach it). When the proxy is seen to
+# arrive on one inner address, set BIND to that address so nothing else on the network can reach the plain-HTTP port.
+h.ThreadingHTTPServer((os.environ.get("BIND", "0.0.0.0"), int(os.environ.get("PORT", 8000))), H).serve_forever()

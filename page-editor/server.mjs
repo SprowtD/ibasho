@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { extname, join, normalize, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { anime, animeDraw, useQueue } from "../anime/server.mjs"; // the anime side (anime/README.md)
+import { library } from "./library.mjs"; // /library: every picture and video made, searchable (read only)
 import { connections } from "./connections.mjs"; // sign-ins and API keys (Settings > Connections)
 import { models, routeModel, estimate, refreshIfOld } from "./models.mjs";
 import { gpuPricesRoute } from "./gpu_prices.mjs"; // live GPU prices (RunPod, Vast.ai)
@@ -14,11 +15,13 @@ import { spend, logSpend, guardSpend, okFrom } from "./spend.mjs";
 import { readBody, sentBadJson, MB, KB } from "./limits.mjs";
 import { codexRun, codexLook, jsonFrom, dataFile, DATA_RULE } from "./codex.mjs"; // untrusted text as data files; look-only jobs read-only // how much each route may be sent
 import { inside, reserved } from "./paths.mjs";
+import { publish } from "./publish.mjs";
 import { lockDoc, writeAtomic, writeJson, updateJson } from "./store.mjs"; // one change at a time per document, written whole (audit item 11) // saved paths stay inside their folder; names that would reach every object
-import { gate, accessCode } from "./access.mjs"; // who may talk to this app: this computer, and devices that typed the access code
+import { gate, accessCode, isLocal } from "./access.mjs"; // who may talk to this app: this computer, and devices that typed the access code
 import { create, runCreate, abandonCreate } from "./create.mjs";
 import { assistant } from "./assistant.mjs";
 import { work, expectFor, recordDone, recordDropped } from "./work.mjs"; // the "Working on" list: progress, history, usual times // the Assistant: a chat that can do the app's own actions // the Create space: a picture or a video from any model // what paid jobs cost, the monthly cap // the model picker: which model each kind of job uses
+import { checkIdea, newIdea, runIdea, ideaState, takeIdea, addReply, keepPlan } from "./writer.mjs"; // the Writer: a chapter script from an idea, read by the person before anything is storyboarded
 import { orPicture, orText } from "./openrouter.mjs"; // OpenRouter calls (writing, pictures; video is on the anime side)
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +48,7 @@ const relOk = (v) => v == null || v === "" || (typeof v === "string" && v.length
 function checkBible(b, old) {
   if (typeof b !== "object" || Array.isArray(b)) throw new Error("not series settings");
   if (b.reading != null && b.reading !== "" && b.reading !== "rtl" && b.reading !== "ltr") throw new Error("the reading direction is rtl (right to left) or ltr (left to right)");
+  if (b.read_on != null && b.read_on !== "" && b.read_on !== "phone" && b.read_on !== "print") throw new Error("a series is read on a phone or in print");
   for (const f of ["cast", "places", "props"]) {
     if (b[f] == null) continue;
     if (typeof b[f] !== "object" || Array.isArray(b[f])) throw new Error(f + " is not a list of names");
@@ -80,6 +84,7 @@ const SKELETON = '<!doctype html><html><head><meta charset="utf-8"><meta name="v
 
 // ---------- the Artist's job runner: "Generate" in the editor draws the panel with Codex, one picture at a time ----------
 const APP = join(ROOT, "..");
+import { stillsApi } from "./stills.mjs"; // "Use existing stills": an anime scene's pictures onto a chapter's panels
 const jobs = new Map(); // "<project>/<panel id>" -> { project, panel, status: waiting | drawing | done | failed, msg, at, took }
 const line = [];
 const run = (cmd, args, opts = {}) => new Promise((res, rej) => execFile(cmd, args, { maxBuffer: 1 << 24, ...opts }, (e, out, err) => (e ? rej(new Error((err || e.message).toString().trim().split("\n").slice(-3).join(" "))) : res(out.toString()))));
@@ -88,8 +93,12 @@ const codex = (dir, prompt, minutes = 15) => codexRun(dir, prompt, { minutes });
 const projDir = (id) => (existsSync(join(ROOT, "projects", id, "spec.json")) ? join(ROOT, "projects", id) : join(ROOT, "samples", id));
 const projUrl = (id) => (existsSync(join(ROOT, "projects", id, "spec.json")) ? "projects/" : "samples/") + id + "/";
 const leavesOf = (rows, out = []) => { for (const r of rows || []) for (const q of r.panels || []) { if (q.rows) leavesOf(q.rows, out); else out.push(q); } return out; };
+// Home: what the person put away. An archived chapter or book only leaves the Home list; nothing on disk is moved or deleted.
+const HOME = join(SAVED, "home.json");
+const homeState = async () => { try { const j = JSON.parse(await readFile(HOME, "utf8")); return j && typeof j.archived === "object" && j.archived ? j : { archived: {} }; } catch { return { archived: {} }; } };
+const changedAt = async (...files) => { let t = 0; for (const f of files) { try { t = Math.max(t, (await stat(f)).mtimeMs); } catch { /* not there */ } } return t ? new Date(t).toISOString() : ""; };
 async function listProjects() {
-  const out = [];
+  const out = [], put = (await homeState()).archived;
   for (const base of ["projects", "samples"]) {
     let names = []; try { names = await readdir(join(ROOT, base)); } catch { continue; }
     for (const id of names.sort()) {
@@ -104,7 +113,8 @@ async function listProjects() {
         let exported = 0; try { exported = (await readdir(join(SAVED, "exports", id))).filter((n) => n.endsWith(".png")).length; } catch { /* never exported */ }
         let cast = 0, sheets = 0, turned = ""; try { const b = JSON.parse(await readFile(join(ROOT, base, id, "bible.json"), "utf8")), cs = Object.values(b.cast || {}); if (b.reading === "rtl" || b.reading === "ltr") turned = b.reading; cast = cs.length; sheets = cs.filter((c) => c && (c.ref || c.sheet)).length; } catch { /* no series settings */ }
         let check = null; try { const cs = await checkState(id); check = { at: cs.check ? cs.check.at : "", open: cs.open, changed: cs.changed.length, running: !!cs.job && (cs.job.status === "waiting" || cs.job.status === "drawing") }; } catch { /* no check */ }
-        out.push({ id, check, cast, sheets, lettered: pages.filter((p) => (p.text || []).length).length, exported, dir: base + "/" + id + "/", own: base === "projects", series: meta.series || "", title: meta.title || "", reading: turned || (spec.reading === "rtl" ? "rtl" : "ltr"), project: spec.project, chapter: spec.chapter, kind: spec.kind || "art",
+        const changed = await changedAt(f, join(SAVED, id + ".json"));
+        out.push({ id, archived: !!put["project:" + id], changed, check, cast, sheets, lettered: pages.filter((p) => (p.text || []).length).length, exported, dir: base + "/" + id + "/", own: base === "projects", series: meta.series || "", title: meta.title || "", reading: turned || (spec.reading === "rtl" ? "rtl" : "ltr"), project: spec.project, chapter: spec.chapter, kind: spec.kind || "art",
           label: `${spec.project} · Chapter ${spec.chapter}` + (spec.kind === "storyboard" ? "" : " · art pages"),
           pages: pages.length, panels: panels.length, drawn: panels.filter((q) => q.image).length, cover: (spec.library && spec.library[0] && spec.library[0].src) || (pages[0] && pages[0].art) || "",
           storyboard: job ? { status: job.status, msg: job.msg, at: job.at, now: Date.now() } : existsSync(join(ROOT, base, id, "board.json")) || base === "samples" ? null : { status: "none" } });
@@ -115,7 +125,14 @@ async function listProjects() {
 }
 // reading direction: a new project or book reads right to left (manga) unless it asks for left to right; anything else is refused, not guessed
 const readingOf = (v) => { if (v == null || v === "" || v === "rtl") return "rtl"; if (v === "ltr") return "ltr"; throw Object.assign(new Error("The reading direction is rtl (right to left) or ltr (left to right)."), { status: 400 }); };
-async function createProject({ name, chapter, script, style, like, reading }) {
+/** The Paneler's note for a chapter written from an agreed plan: the turn as a reveal, and the four parts with their pages. */
+function paceNote(st) {
+  const acts = (st.acts || []).filter((a) => a && a.part), total = acts.reduce((n, a) => n + (+a.pages || 0), 0), out = [];
+  if (st.turn) out.push("From the Writer: the turn of the story is this moment: " + st.turn + " Make it a reveal: the first panel of its page and the biggest picture of the chapter.");
+  if (acts.length) out.push(`The story plan agreed with the person, in ${acts.length} parts (about ${total} pages): ` + acts.map((a) => `${a.part}, about ${a.pages} page${a.pages === 1 ? "" : "s"}${a.what ? " (" + a.what.replace(/[.\s]+$/, "") + ")" : ""}`).join("; ") + ". Pace the pages to it.");
+  return out.join(" ").slice(0, 1200);
+}
+async function createProject({ name, chapter, script, style, like, reading, idea }) {
   name = String(name || "").trim().slice(0, 80); script = String(script || "");
   if (!name) throw new Error("Give the project a name.");
   if (script.trim().length < 40) throw new Error("Paste the chapter script first.");
@@ -125,7 +142,11 @@ async function createProject({ name, chapter, script, style, like, reading }) {
   let id = slug, n = 1; while (existsSync(join(ROOT, "projects", id)) || existsSync(join(ROOT, "samples", id))) id = slug + "-" + ++n;
   const dir = join(ROOT, "projects", id);
   await mkdir(join(dir, "art", "panels"), { recursive: true });
-  await writeFile(join(dir, "project.json"), JSON.stringify({ name, chapter: ch, reading: readingOf(reading), created: new Date().toISOString() }, null, 1));
+  // a chapter the Writer wrote from an idea: the idea and the Writer's notes on the story are kept (the original-story advice reads them), and the turn goes to the Paneler as a note the person can see and change
+  const drafted = idea ? await takeIdea(SAVED, idea, script) : null;
+  await writeFile(join(dir, "project.json"), JSON.stringify({ name, chapter: ch, reading: readingOf(reading), created: new Date().toISOString(),
+    ...(drafted ? { story: drafted.story, ...(!drafted.story.edited && (drafted.story.turn || (drafted.story.acts || []).length) ? { paneler_note: paceNote(drafted.story) } : {}) } : {}) }, null, 1));
+  if (drafted) await writeFile(join(dir, "idea.md"), drafted.idea.trim() + "\n");
   await writeFile(join(dir, "script.md"), script);
   // another chapter of a series that already exists: it shares that project's style, cast, places, props and sheets
   const first = like && existsSync(join(ROOT, "projects", clean(like), "bible.json")) && !existsSync(join(ROOT, "projects", clean(like), "sections")) ? clean(like) : "";
@@ -216,11 +237,12 @@ const readSeries = async (id) => JSON.parse(await readFile(join(SERIES, id, "ser
 async function listSeries() {
   let names = []; try { names = await readdir(SERIES); } catch { return []; }
   const out = [];
+  const put = (await homeState()).archived;
   for (const id of names.sort()) {
     try {
       const s = await readSeries(id), real = s.chapters.filter((c) => c.kind !== "front");
       let reading = "ltr"; try { if (JSON.parse(await readFile(join(SERIES, id, "bible.json"), "utf8")).reading === "rtl") reading = "rtl"; } catch { /* no settings */ }
-      out.push({ id, name: s.name, reading, chapters: real.length, words: s.words, pages_est: s.pages_est, started: real.filter((c) => c.project && existsSync(join(ROOT, "projects", c.project, "spec.json"))).length });
+      out.push({ id, archived: !!put["book:" + id], name: s.name, reading, chapters: real.length, words: s.words, pages_est: s.pages_est, started: real.filter((c) => c.project && existsSync(join(ROOT, "projects", c.project, "spec.json"))).length });
     } catch { /* unreadable: leave it out */ }
   }
   return out;
@@ -380,7 +402,7 @@ async function storyboard(job) {
 async function startStoryboard(id, note, ok) {
   const key = id + "/paneler", old = jobs.get(key);
   if (old && (old.status === "waiting" || old.status === "drawing")) return old;
-  if (note != null) await updateJson(join(ROOT, "projects", id, "project.json"), (meta) => { meta.paneler_note = String(note).trim().slice(0, 600); });
+  if (note != null) await updateJson(join(ROOT, "projects", id, "project.json"), (meta) => { meta.paneler_note = String(note).trim().slice(0, 1200); });
   const job = { project: id, panel: "paneler", kind: "paneler", status: "waiting", queued: Date.now(), ok }; jobs.set(key, job); line.push(job); pump();
   return job;
 }
@@ -409,7 +431,7 @@ async function drawSheet(job) {
     ? [`Use case: illustration-story. Create ONE ${ink} PLACE REFERENCE PICTURE, landscape 1536x1024: one wide, clear view of the whole place from eye level, so that an artist can draw any corner of it afterwards. NO people, no animals, no figures of any kind. One picture only: no panel borders, no insets.`, "THE PLACE. " + c.desc]
     : kind === "prop"
     ? [`Use case: illustration-story. Create ONE ${ink} PROP REFERENCE SHEET, landscape 1536x1024, on plain white paper. ONE object only, drawn twice side by side at the same size: (left) the whole object seen from the side; (right) the same object in three-quarter view. No hands, no people, no scenery, no panel borders.`, "THE OBJECT. " + c.desc]
-    : [`Use case: illustration-story. Create ONE ${ink} CHARACTER REFERENCE SHEET, landscape 1536x1024, on plain white paper.` + " ONE character only, drawn three times in a row, the same person in the same clothes: (left) the full figure standing, front view, arms relaxed at the sides; (middle) head and shoulders, front view, calm neutral expression, mouth closed; (right) head and shoulders, three-quarter view. No other people, no props unless the description names one, no scenery, no panel borders.", "THE CHARACTER. " + c.desc];
+    : [`Use case: illustration-story. Create ONE ${ink} CHARACTER REFERENCE SHEET, landscape 1536x1024, on plain white paper.` + " ONE character only, the same person in the same clothes every time. TOP ROW, three drawings: (left) the full figure standing, front view, arms relaxed at the sides; (middle) head and shoulders, front view, calm neutral expression, mouth closed; (right) head and shoulders, three-quarter view. BOTTOM ROW, four small heads, front view, the same face showing four expressions: angry, crying, laughing, surprised (the face stays the same person; only the expression changes). Draw the clothes properly: real folds, seams and creases where cloth bends, and the shading or tone the style uses. No other people, no props unless the description names one, no scenery, no panel borders.", "THE CHARACTER. " + c.desc];
   const prompt = [lead[0],
     "NO TEXT: no letters, labels, names, captions, numbers, arrows or signatures anywhere.",
     bible.style,
@@ -480,7 +502,7 @@ async function lookAgain(job) {
 // ---------- the asset checker: do the pictures in use agree with each other and with the approved sheets? ----------
 // tools/asset_lineup.py cuts every appearance of each character, place and prop into numbered line-ups; the Checker agent (Codex, looking only)
 // answers a fixed list per appearance. Kept in <project>/art/check/check.json. A fault only warns: nothing is ever blocked by it.
-const ABOUT = ["face", "age", "hair", "outfit", "hands", "prop", "mark", "place", "other"], SURE = ["high", "medium", "low"];
+const ABOUT = ["face", "age", "hair", "outfit", "hands", "prop", "mark", "staging", "place", "other"], SURE = ["high", "medium", "low"];
 const checkFile = (id) => join(projDir(id), "art", "check", "check.json");
 async function pagesFor(id) { // the person's saved copy when it is of this storyboard, else the built pages
   const spec = join(projDir(id), "spec.json"), saved = join(SAVED, id + ".json");
@@ -505,10 +527,10 @@ async function assetCheck(job) {
   await mkdir(dir, { recursive: true }); await rm(report, { force: true });
   const made = JSON.parse((await run("/usr/bin/python3", [join(APP, "tools/asset_lineup.py"), proj, ...(await pagesFor(id))])).trim().split("\n").pop());
   if (!made.tiles) throw new Error("Nothing to check yet: no drawn picture has a labelled face, a place or a prop in it.");
-  const L = JSON.parse(await readFile(join(dir, "lineups.json"), "utf8")), act = Object.fromEntries(L.panels.map((p) => [p.panel, p.action]));
+  const L = JSON.parse(await readFile(join(dir, "lineups.json"), "utf8")), act = Object.fromEntries(L.panels.map((p) => [p.panel, p.action])), stage = Object.fromEntries(L.panels.map((p) => [p.panel, p.staging || ""]));
   const role = await readFile(join(APP, "agents/checker/role.md"), "utf8"), data = join(dir, "CHECK_DATA.json");
   await dataFile(data, { groups: L.groups.map((g) => ({ name: g.name, kind: g.kind, description: g.desc || "none given", approved_sheet: g.sheet || null, lineups: g.lineups.map((f) => join(proj, f)),
-    tiles: g.tiles.map((t) => ({ n: t.n, page: t.page, panel: t.panel, face_labelled: !!t.face, whole_picture: join(proj, t.image), what_happens: act[t.panel] || "not said" })) })) });
+    tiles: g.tiles.map((t) => ({ n: t.n, page: t.page, panel: t.panel, face_labelled: !!t.face, whole_picture: join(proj, t.image), what_happens: act[t.panel] || "not said", ...(stage[t.panel] ? { storyboard_staging: stage[t.panel] } : {}) })) })) });
   await writeFile(task, [role, "", "## This check", "", "Do NOT generate, edit or save any picture, and write no file: you cannot write here. Where the instructions above say to write one JSON file, give that JSON as your final message instead, and nothing else.", "", DATA_RULE, "",
     `Everything to check is in the DATA file \`${data}\`: for each character, place and prop its description, its approved sheet (null = none: compare the tiles with each other and the description), its line-up pictures and its tiles (number, page, panel, whether a face was labelled or the tile is the whole picture, the whole picture's file, and what happens in that panel). Open the pictures it names.`].join("\n"));
   let got; try { got = jsonFrom(await codexLook(dir, `Read the task file ${task} and follow it exactly: look at the pictures it lists and answer with one JSON object as your final message. Do not generate images and write no files.`, { minutes: 25 })); await writeFile(report, JSON.stringify(got, null, 1)); }
@@ -528,6 +550,8 @@ async function assetCheck(job) {
 }
 /** The Toner on one page (tools/toner.py): every drawn panel's flat greys become screentone made by code, at the page's final
  *  size, kept in <project>/art/tone/<page id>/<panel id>/ as layers with masks and one flat picture. No model, nothing paid. */
+const moireSeen = new Map(); // project -> { key: the exported pages and when each was written, made: a promise of the measurements }
+const TONE_LINES = [40, 50, 60, 70, 85]; // the dot sizes offered on the screen: rows of dots to the inch, coarse to fine
 const toneDir = (id, page) => join(projDir(id), "art", "tone", clean(page));
 async function runToner(job) {
   const dir = projDir(job.project), out = toneDir(job.project, job.page);
@@ -540,7 +564,7 @@ async function runToner(job) {
 async function toneState(id) {
   const out = {}, root = join(projDir(id), "art", "tone"); let pages = []; try { pages = await readdir(root); } catch { return out; }
   for (const pg of pages) { let j; try { j = JSON.parse(await readFile(join(root, pg, "page.json"), "utf8")); } catch { continue; }
-    out[pg] = { check: j.check || null, settings: j.settings || null, panels: (j.panels || []).filter((p) => p && p.id && p.flat && existsSync(join(root, pg, p.dir, p.flat))).map((p) => ({ id: p.id, src: `art/tone/${pg}/${p.dir}/${p.flat}`, box: p.box, px: p.px, of: p.image, focus: p.focus, zoom: p.zoom, layers: p.layers || [], baked: !!(p.baked_dots && p.baked_dots.baked), strokes: p.strokes || 0 })) }; }
+    out[pg] = { check: j.check || null, settings: j.settings || null, panels: (j.panels || []).filter((p) => p && p.id && p.flat && existsSync(join(root, pg, p.dir, p.flat))).map((p) => ({ id: p.id, src: `art/tone/${pg}/${p.dir}/${p.flat}`, box: p.box, px: p.px, of: p.image, focus: p.focus, zoom: p.zoom, layers: p.layers || [], baked: !!(p.baked_dots && p.baked_dots.baked), strokes: p.strokes || 0, ...(p.kind === "breakout" ? { kind: "breakout", flip: !!p.flip } : p.kind === "page" ? { kind: "page" } : {}) })) }; }
   return out;
 }
 /** A break-out: one figure drawn alone on plain white, then cut out of it (tools/cutout.py), to stand above the panel borders.
@@ -584,6 +608,8 @@ async function draw(job) {
   if (job.kind === "check") return assetCheck(job);
   if (job.kind === "anime") return animeDraw(job); // a shot's still or a look sheet on the anime side
   if (job.kind === "paneler") return storyboard(job);
+  if (job.kind === "writer") { const r = await routeModel(SAVED, "text"), est = r.service === "openrouter" ? await estimate("text", r.model) : null; job.model = r.model;
+    return runIdea(SAVED, APP, job, r, { guard: () => guardSpend(SAVED, est, "The Writer", job.ok), log: (usd) => logSpend(SAVED, { project: "", what: job.step === "plan" ? "talking a story through" : "chapter from an idea", kind: "text", model: r.model, usd, est }) }); }
   if (job.kind === "create") return runCreate(SAVED, job);
   if (job.kind === "look") return lookAgain(job);
   if (job.kind === "sheet") return drawSheet(job);
@@ -608,7 +634,7 @@ async function draw(job) {
     if (lack.length) throw new Error(`Not drawn: ${lack.join(" and ")} ${lack.length === 1 ? "has" : "have"} no approved character sheet. Add or approve ${lack.length === 1 ? "it" : "them"} in Series.`);
   }
   const task = lines[lines.length - 2], pic = list[0].save;
-  job.model = list[0].source === "openrouter" ? list[0].model : "codex";
+  job.model = list[0].source === "openrouter" ? list[0].model : "codex"; persist(); // kept with the queue: after a restart a paid picture that was already sent is not sent a second time by itself
   if (list[0].source === "openrouter") { // a picked OpenRouter model: the server sends the prompt and the references itself
     const r = await routeModel(SAVED, "picture", { service: "openrouter", model: list[0].model, quality: list[0].quality });
     const est = await estimate("picture", r.model, { quality: r.quality, size: list[0].size, refs: list[0].refs.length, chars: list[0].prompt.length });
@@ -644,6 +670,7 @@ async function draw(job) {
   await run("/usr/bin/python3", [join(APP, "tools/artist_panel.py"), proj, job.panel, pic]);
   });
 }
+const stills = stillsApi({ ROOT, SAVED, APP, SCENES: process.env.STUDIO_ANIME || join(ROOT, "anime-scenes"), run, oneAtATime: (fn) => oneAtATime(fn), isLocal, body: (req) => body(req, 1 * MB) });
 // The queue is written to disk at every change, so a restart (of the editor or the computer) carries on where it stopped.
 const QUEUE = join(SAVED, "queue.json");
 // Several pictures are drawn at once (each is its own Codex run); what they write into the project is done one at a time.
@@ -651,7 +678,7 @@ const WORKERS = Math.max(1, Math.min(4, +process.env.STUDIO_DRAWERS || 2)), runn
 let chain = Promise.resolve();
 const oneAtATime = (fn) => { const r = chain.then(fn, fn); chain = r.catch(() => {}); return r; };
 async function persist() {
-  try { await mkdir(SAVED, { recursive: true }); await writeFile(QUEUE, JSON.stringify([...running].concat(line).map((j) => ({ project: j.project, panel: j.panel, kind: j.kind, name: j.name, thing: j.thing, pid: j.pid, queued: j.queued, scene: j.scene, what: j.what, shot: j.shot, pick: j.pick, cid: j.cid, orJob: j.orJob, model: j.model, look: j.look, ok: j.ok, request: j.request, boardAt: j.boardAt, bid: j.bid, action: j.action, page: j.page, only: j.only })))); } catch { /* the queue still runs */ }
+  try { await mkdir(SAVED, { recursive: true }); await writeFile(QUEUE, JSON.stringify([...running].concat(line).map((j) => ({ project: j.project, panel: j.panel, kind: j.kind, name: j.name, thing: j.thing, pid: j.pid, queued: j.queued, scene: j.scene, what: j.what, shot: j.shot, pick: j.pick, cid: j.cid, orJob: j.orJob, model: j.model, was: running.has(j) ? "drawing" : "waiting", look: j.look, ok: j.ok, request: j.request, boardAt: j.boardAt, bid: j.bid, action: j.action, page: j.page, only: j.only })))); } catch { /* the queue still runs */ }
 }
 async function pump() {
   await persist();
@@ -676,6 +703,8 @@ async function resumeQueue() { // jobs that were waiting, or half done, when the
   let old = []; try { old = JSON.parse(await readFile(QUEUE, "utf8")); } catch { return; }
   for (const j of old) { if (!j || !j.project || !j.panel || (j.kind !== "anime" && j.kind !== "create" && !existsSync(projDir(j.project)))) continue;
     if (j.kind === "anime" && j.what === "video" && !j.orJob) { await recordDropped(SAVED, j, "Stopped by a restart before it was sent. Press Make a video again."); continue; }
+    if (j.was === "drawing" && j.model && j.model !== "codex" && (!j.kind || j.kind === "paneler")) { const msg = "Stopped by a restart while a paid model was at work on it: it may be paid for already, so it was not sent again. Press Generate again if it did not land.";
+      jobs.set(j.project + "/" + j.panel, { ...j, request: undefined, status: "failed", msg }); await recordDropped(SAVED, j, msg); continue; } // shown on the panel, and in the list of finished work
     if (j.kind === "create" && !(await abandonCreate(SAVED, j.cid))) { await recordDropped(SAVED, j, "Stopped by a restart. Press Make again in Create."); continue; } // never re-sent by itself: it may be paid for already // a paid video is never sent again by itself: it may already have been paid for; the person presses again
     const job = { ...j, status: "waiting", resumed: true }; jobs.set(j.project + "/" + j.panel, job); line.push(job); }
   if (line.length) { console.log(`Carrying on with ${line.length} job${line.length === 1 ? "" : "s"} from before the restart`); pump(); }
@@ -720,6 +749,42 @@ http.createServer(async (req, res) => {
       return res.end("saved");
     }
     if (url.pathname === "/api/projects" && req.method === "GET") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify(await listProjects())); }
+    if ((url.pathname === "/api/idea/reply" || url.pathname === "/api/idea/write") && req.method === "POST") { // the talk goes on, or the script is asked for from the plan as it stands
+      res.setHeader("content-type", "application/json");
+      try {
+        const b = JSON.parse((await body(req, 64 * KB)).toString() || "{}"), id = /^[a-f0-9]{12}$/.test(String(b.id || "")) ? String(b.id) : "", key = "idea~" + id + "/writer", was = jobs.get(key);
+        if (!id) throw Object.assign(new Error("That idea is no longer here. Type it again."), { status: 404 });
+        if (was && (was.status === "waiting" || was.status === "drawing")) throw Object.assign(new Error("The Writer is still answering. Wait for it first."), { status: 409 });
+        const reply = url.pathname === "/api/idea/reply";
+        if (reply) { if (!String(b.say || "").trim() && !b.plan) throw Object.assign(new Error("Say something to the Writer first, or change the plan."), { status: 400 }); await addReply(SAVED, id, b.say, b.plan); }
+        else await keepPlan(SAVED, id, b.plan);
+        const job = { project: "idea~" + id, panel: "writer", kind: "writer", idea: id, step: reply ? "plan" : "script", status: "waiting", queued: Date.now(), ok: okFrom(req) };
+        jobs.set(key, job); line.push(job); pump();
+        return res.end(JSON.stringify({ id, ...(await ideaState(SAVED, id, job)) }));
+      } catch (e) { res.statusCode = e.status || 400; return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 300) })); }
+    }
+    if (url.pathname === "/api/idea") { // the Writer: talks an idea through (a story plan and questions), then writes a draft script; the person reads it in the New project form
+      res.setHeader("content-type", "application/json");
+      try {
+        if (req.method === "POST") {
+          const b = JSON.parse((await body(req, 64 * KB)).toString() || "{}"), idea = checkIdea(b.idea), like = b.like ? clean(b.like) : "";
+          let series = null; if (like) { try { const bible = JSON.parse(await readFile(join(ROOT, "projects", like, "bible.json"), "utf8")); series = { name: bible.project || like, cast: bible.cast, places: bible.places }; } catch { /* a new series */ } }
+          const id = await newIdea(SAVED, idea, series), job = { project: "idea~" + id, panel: "writer", kind: "writer", idea: id, step: b.skip ? "script" : "plan", status: "waiting", queued: Date.now(), ok: okFrom(req) };
+          jobs.set(job.project + "/writer", job); line.push(job); pump();
+          return res.end(JSON.stringify({ id, ...(await ideaState(SAVED, id, job)) }));
+        }
+        const id = url.searchParams.get("id") || ""; return res.end(JSON.stringify(await ideaState(SAVED, id, jobs.get("idea~" + id + "/writer"))));
+      } catch (e) { res.statusCode = e.status || 400; return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 300) })); }
+    }
+    if (await stills(req, res, url)) return; // /api/stills/*
+    if (url.pathname === "/api/put-away" && req.method === "POST") { // put a chapter or a book away from Home, or bring it back; nothing is deleted
+      const j = JSON.parse(await body(req, 4 * KB)), kind = j.kind === "book" ? "book" : "project", id = String(j.id || "");
+      const there = okId(id) && (kind === "book" ? existsSync(join(SERIES, id)) : existsSync(join(ROOT, "projects", id, "spec.json")) || existsSync(join(ROOT, "samples", id, "spec.json")));
+      res.setHeader("content-type", "application/json");
+      if (!there) { res.statusCode = 404; return res.end(JSON.stringify({ error: "There is no such " + (kind === "book" ? "book" : "chapter") + "." })); }
+      await updateJson(HOME, (h) => { if (!h.archived || typeof h.archived !== "object") h.archived = {}; if (j.on) h.archived[kind + ":" + id] = new Date().toISOString(); else delete h.archived[kind + ":" + id]; }, () => ({ archived: {} }));
+      return res.end(JSON.stringify({ ok: true, archived: !!j.on }));
+    }
     if (url.pathname === "/api/projects" && req.method === "POST") { // a new project from a script; the Paneler starts straight away
       res.setHeader("content-type", "application/json");
       try {
@@ -903,6 +968,16 @@ http.createServer(async (req, res) => {
       const q = url.searchParams, id = (q.get("p") || "").replace(/[^\w-]/g, "_"), send = (j, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store"); return res.end(JSON.stringify(j)); };
       if (!id || !existsSync(join(ROOT, "projects", id, "spec.json"))) return send({ error: "The Toner works in a project of your own." }, 404);
       const page = q.get("page") || "", panel = q.get("panel") || "", okId = (s) => /^[A-Za-z0-9_-]{1,60}$/.test(s);
+      if (url.pathname === "/api/tone" && q.get("settings") != null) { // the chapter's dot size and kind of tone (toner.json, read by tools/toner.py)
+        const f = join(projDir(id), "toner.json"), read = async () => { let j = {}; try { j = JSON.parse(await readFile(f, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; } return j; };
+        const shown = (j) => ({ lines: Number.isFinite(+j.lines) ? +j.lines : 60, kind: j.kind === "noise" ? "noise" : "dots", choices: TONE_LINES });
+        if (req.method === "GET") return send(shown(await read()));
+        if (req.method !== "PUT") return send({ error: "GET or PUT." }, 405);
+        const b = JSON.parse((await body(req, MB)).toString()), lines = Math.round(+b.lines);
+        if (!TONE_LINES.includes(lines)) return send({ error: "The dot size is one of " + TONE_LINES.join(", ") + " lines to the inch." }, 400);
+        if (b.kind !== "dots" && b.kind !== "noise") return send({ error: "The tone is dots or noise." }, 400);
+        return send(shown(await updateJson(f, (j) => { j.lines = lines; j.kind = b.kind; }, () => ({}))));
+      }
       if (url.pathname === "/api/tone") {
         if (req.method === "GET") return send(await toneState(id));
         if (req.method !== "POST") return send({ error: "GET or POST." }, 405);
@@ -957,6 +1032,18 @@ http.createServer(async (req, res) => {
         return j.error ? send({ error: j.error }, j.status) : send({ code, layouts: j.layouts });
       }
     }
+    if (url.pathname === "/api/exports/moire" && req.method === "GET") { // the measured moire test on the exported pages (tools/toner.py moire): is a second set of dots lying over the first?
+      const proj = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj), send = (j, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store"); return res.end(JSON.stringify(j)); };
+      let names = []; try { names = proj ? (await readdir(dir)).filter((n) => /^page-\d+\.png$/.test(n)).sort() : []; } catch { /* none yet */ }
+      if (!names.length) return send([]);
+      let key = ""; for (const n of names) key += n + ":" + (await stat(join(dir, n))).mtimeMs + ";";
+      const had = moireSeen.get(proj);
+      if (!had || had.key !== key) { // measured once for each export; about two seconds a page, one project's pages at a time
+        const made = lockDoc(join(dir, "moire"), async () => JSON.parse((await run("/usr/bin/python3", [join(APP, "tools/toner.py"), "moire", dir], { timeout: 900000 })).trim().split("\n").pop()));
+        moireSeen.set(proj, { key, made }); made.catch(() => moireSeen.delete(proj));
+      }
+      try { return send(await moireSeen.get(proj).made); } catch (e) { return send({ error: "The pages could not be measured: " + e.message }, 500); }
+    }
     if (url.pathname === "/api/exports") { // the last chapter export of a project
       const proj = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj);
       if (req.method === "DELETE") { if (proj) await rm(dir, { recursive: true, force: true }); return res.end("cleared"); }
@@ -968,8 +1055,8 @@ http.createServer(async (req, res) => {
       const q = url.searchParams, proj = (q.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj);
       const old = url.pathname === "/api/export-x" ? { format: "jpeg", size: "web", sets: 20 } : url.pathname === "/api/export-zip" ? { format: "png" } : null; // the two older addresses still answer
       const o = old || { format: q.get("format") || "pdf", size: q.get("size") === "web" ? "web" : "full", quality: q.get("quality") === "small" ? "small" : "best", sets: Math.max(0, Math.min(100, parseInt(q.get("sets"), 10) || 0)),
-        pages: (q.get("pages") || "").split(",").map((n) => parseInt(n, 10)).filter((n) => n > 0), rtl: q.get("rtl") === "1", title: (q.get("title") || "").slice(0, 200) };
-      if (!["pdf", "png", "jpeg"].includes(o.format)) { res.statusCode = 400; return res.end("The format is pdf, png or jpeg."); }
+        paper: ["b5", "a5", "us"].includes(q.get("paper")) ? q.get("paper") : "b5", pages: (q.get("pages") || "").split(",").map((n) => parseInt(n, 10)).filter((n) => n > 0), rtl: q.get("rtl") === "1", title: (q.get("title") || "").slice(0, 200) };
+      if (!["pdf", "print", "png", "jpeg"].includes(o.format)) { res.statusCode = 400; return res.end("The format is pdf, print, png or jpeg."); }
       if (!proj || !existsSync(dir)) { res.statusCode = 404; return res.end("Nothing is exported yet."); }
       o.name = proj;
       const tmp = join(SAVED, "exports", `${proj}-download-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
@@ -977,7 +1064,7 @@ http.createServer(async (req, res) => {
         let made; try { made = JSON.parse((await run("/usr/bin/python3", [join(APP, "tools/export_pages.py"), dir, tmp, JSON.stringify(o)], { timeout: 600000 })).trim().split("\n").pop()); }
         catch (e) { const none = /None of those pages/.test(e.message); res.statusCode = none ? 404 : 500; return res.end(none ? "None of those pages is exported yet." : "The export file could not be made: " + e.message); }
         const one = (o.pages || []).length === 1 && made.kind !== "pdf" && made.kind !== "zip" ? `-page-${String(o.pages[0]).padStart(2, "0")}` : "";
-        const file = made.kind === "pdf" ? `${proj}.pdf` : made.kind === "zip" ? `${proj}-${o.format}${o.sets ? "-sets-of-" + o.sets : ""}.zip` : `${proj}${one}.${made.kind}`;
+        const file = made.kind === "pdf" ? (o.format === "print" ? `${proj}-print-${o.paper}.pdf` : `${proj}.pdf`) : made.kind === "zip" ? `${proj}-${o.format}${o.sets ? "-sets-of-" + o.sets : ""}.zip` : `${proj}${one}.${made.kind}`;
         res.setHeader("content-type", { pdf: "application/pdf", zip: "application/zip", png: "image/png", jpg: "image/jpeg" }[made.kind]); res.setHeader("content-disposition", `attachment; filename="${file}"`);
         return res.end(await readFile(tmp));
       } finally { await rm(tmp, { force: true }); }
@@ -996,6 +1083,8 @@ http.createServer(async (req, res) => {
       res.setHeader("content-type", "image/png"); return res.end(await readFile(f));
     }
     if (await connections(req, res, url, SAVED)) return; // /connections and /api/connections*
+    if (await publish(req, res, url, SAVED)) return; // /api/publish*: a finished chapter to the person's reading site, as a private draft
+    if (await library(req, res, url, { root: ROOT, saved: SAVED })) return; // /library and /api/library
     if (await models(req, res, url, SAVED)) return;
     if (await spend(req, res, url, SAVED)) return;
     if (await assistant(req, res, url, SAVED)) return; // /api/assistant

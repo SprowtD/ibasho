@@ -1,4 +1,4 @@
-# Paneler checklist (sources: akirao3wq 20-page study, manga-page PAGE_STYLE.md, scene-planning craft notes)
+# Paneler checklist
 
 Story and pacing
 1. Every page ends on a beat: a reaction, question, reveal or punchline. Write it as the page `note`.
@@ -42,3 +42,13 @@ Story and page turn (references K, L). Advice to the author; a book's own words 
 28. The first five pages of a story carry fewer words (45 a page at most) and are easy to read: the opening is where the reader is won or lost.
 29. The turn of the story gets the biggest picture in the chapter (the splash; a full page when it earns it).
 30. When the picture says it, the line can go: a crying face does not need "I am so sad". In an original script, flag it for the author; in a book, keep the line.
+
+A manga editor's notes and readers' notes (20 Nov 2026). The page check gives these as advice.
+31. Never the same composition twice in a row, across the page turn too. A slight turn of the head is not a new picture: change the distance or the angle.
+32. Mix figure sizes on a page: someone small in a wide panel, medium for the talk, one close face. A page of all medium (or all close) shots is flat even when the angles change.
+33. Too many medium shoulder-up panels is the commonest fault. Put wide panels in on purpose: they set the place and show how people move.
+34. A face-only panel is for when the expression is the point (the villain's bitter face, the love interest's soft look). Do not skip those, and do not fill a page with faces.
+35. At every change of scene, one panel shows the place. Sometimes give it a third of the page, with a caption or a thought over it.
+36. The camera follows the feeling: a back turned as two people drift apart, a small figure in a big frame when someone is pushed away. Mark a tense beat with `tension` (tense, danger, fear) and the Artist picks the camera: low; tilted and pulled back; close behind the hero.
+37. Busy acting (standing, sitting, passing something from hand to hand): sort out the order of moves first, then pick per beat whether we see the whole body or the face.
+38. Web and phone pages read best with 3 to 5 panels. Fewer, roomier panels beat seven cramped ones: give each panel one thing to say.

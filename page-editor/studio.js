@@ -224,8 +224,8 @@
   const load = () => { try { msgs = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { msgs = []; } };
   const keep = () => { try { localStorage.setItem(KEY, JSON.stringify(msgs.slice(-40))); } catch (e) { /* no storage */ } };
   const GLOBAL = {
-    open_screen: { desc: "Go to another part of the app", args: { screen: "home | manga | anime | create | connections" }, label: (a) => `Open ${a.screen}`,
-      run: (a) => { location.href = { home: "/#home", manga: "/", anime: "/anime/#/", create: "/create", connections: "/connections" }[a.screen] || "/#home"; } },
+    open_screen: { desc: "Go to another part of the app", args: { screen: "home | manga | anime | create | library | connections" }, label: (a) => `Open ${a.screen}`,
+      run: (a) => { location.href = { home: "/#home", manga: "/", anime: "/anime/#/", create: "/create", library: "/library", connections: "/connections" }[a.screen] || "/#home"; } },
   };
   const all = () => ({ ...GLOBAL, ...reg.actions });
   window.Ibasho = window.Ibasho || {};

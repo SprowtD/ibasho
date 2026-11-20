@@ -25,7 +25,7 @@ const progress = (p) => fs.writeFileSync(path.join(work, "progress.json"), JSON.
 
 function codex(cwd, prompt, minutes = 25) {
   return new Promise((res, rej) => {
-    const c = spawn("codex", ["exec", "-c", `model_reasoning_effort="${EFFORT}"`, "--skip-git-repo-check", "--sandbox", "workspace-write", "-C", cwd, prompt], { stdio: ["ignore", "ignore", "pipe"] });
+    const c = spawn("codex", ["exec", ...(process.env.STUDIO_CODEX_AGENTS === "1" ? [] : ["-c", "features.multi_agent=false"]), "-c", `model_reasoning_effort="${EFFORT}"`, "--skip-git-repo-check", "--sandbox", "workspace-write", "-C", cwd, prompt], { stdio: ["ignore", "ignore", "pipe"] });
     let err = ""; c.stderr.on("data", (d) => { err = (err + d).slice(-2000); });
     const t = setTimeout(() => { c.kill(); rej(new Error(`Codex took longer than ${minutes} minutes`)); }, minutes * 60000);
     c.on("error", (e) => { clearTimeout(t); rej(new Error("Codex could not start: " + e.message)); });

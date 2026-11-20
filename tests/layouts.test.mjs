@@ -2,7 +2,8 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, cpSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process"; import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO, startApp } from "./harness.mjs";
 const require = createRequire(import.meta.url);
@@ -51,4 +52,45 @@ test("your own layouts: saved with only the build kept, numbered, listed, remove
 });
 test("something that is not a layout is refused", async () => {
   for (const rows of [null, [], [{ h: 1 }], [{ h: 1, panels: [] }], [{ h: 1, panels: Array(7).fill({ w: 1 }) }], Array(3).fill({ h: 1, panels: Array(5).fill({ w: 1 }) })]) assert.equal((await call("POST", "", { rows })).status, 400, JSON.stringify(rows).slice(0, 60));
+});
+
+test("a new storyboard is laid out with your own layouts too: of two that fit equally, yours is picked; without any, nothing changes", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "ibasho-ownlayouts-")), dir = join(tmp, "proj"), saved = join(tmp, "saved"); mkdirSync(saved);
+  cpSync(join(REPO, "tests/manga-direction/fixtures/ferry"), dir, { recursive: true });
+  const build = () => JSON.parse(execFileSync("node", [join(REPO, "tools/build_spec.mjs"), dir], { env: { ...process.env, STUDIO_SAVED: saved } }).toString().trim().split("\n").pop());
+  try {
+    const plain = build(), rows0 = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")).pages.map((p) => JSON.stringify(p.layout.rows));
+    assert.ok(plain.directed.length === 4 && plain.directed.every((d) => !/MY-/.test(d)), "with no layouts of your own, the ready-made ones are used: " + plain.directed);
+    const code = plain.directed[1].split(":")[1], mine = T.find((t) => t.code === code); // your own copy of the layout page 2 got
+    writeFileSync(join(saved, "layouts.json"), JSON.stringify({ layouts: [{ code: "MY-01", name: "mine", rows: mine.rows }, { code: "MY-02", name: "broken" }] }));
+    const own = build(), rows1 = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")).pages.map((p) => JSON.stringify(p.layout.rows));
+    assert.equal(own.directed[1], "2:MY-01", "your layout is picked for the page it fits: " + own.directed);
+    assert.equal(rows1[1], rows0[1], "and the page is built the same way from it");
+    assert.deepEqual(own.faults, plain.faults);
+    assert.doesNotMatch(readFileSync(join(dir, "spec.json"), "utf8"), /MY-01/, "your layouts are not copied into the project");
+    writeFileSync(join(saved, "layouts.json"), "not json");
+    assert.deepEqual(build().directed, plain.directed, "a layouts file that cannot be read is passed over");
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("a page can be one panel: framed inside the margins, or to the page's edges with no border for the splash", () => {
+  const one = (b) => [{ id: "p0", board: Object.assign({ who: [], lines: [] }, b) }];
+  const plain = D.layout(one({ weight: 4 }), T, R, {}), splash = D.layout(one({ splash: true }), T, R, {});
+  assert.equal(plain.code, "L1-01"); assert.equal(plain.rows[0].panels[0].type, "framed"); assert.equal(plain.rows[0].panels[0].id, "p0");
+  assert.equal(splash.code, "L1-02"); assert.equal(splash.rows[0].panels[0].type, "bleed");
+  assert.equal(D.sorted(one({}), T, R, {}).length, 2, "both are offered for a one-panel page");
+  const box = (rows) => R.allPanels({ rows })[0].bbox;
+  assert.deepEqual(box(splash.rows), [0, 0, R.W, R.H], "the full-bleed panel is the whole page");
+  assert.deepEqual(box(plain.rows), [R.MARGIN, R.MARGIN, R.W - R.MARGIN, R.H - R.MARGIN]);
+  assert.equal(R.pageNumberSvg({ number: 7, layout: { rows: splash.rows } }), "", "a page whose picture runs to its foot prints no page number over the art");
+  assert.match(R.pageNumberSvg({ number: 7, layout: { rows: plain.rows } }), />7</);
+  // a project whose own list was written before these layouts existed is still offered them, once
+  const old = T.filter((t) => !/^L1-/.test(t.code)); assert.equal(D.withFullPage(old).filter((t) => /^L1-/.test(t.code)).length, 2); assert.equal(D.withFullPage(T).length, T.length);
+  // the page check has nothing against a one-panel page
+  for (const rows of [plain.rows, splash.rows]) { const out = Paneler.check({ kind: "storyboard", script: [], pages: [{ id: "p1", number: 1, note: "n", layout: { rows } }] }, R).pages.p1 || []; assert.equal(out.filter((x) => x.level === "error").length, 0, JSON.stringify(out)); }
+});
+test("the Artist is told when its picture is the whole page", () => {
+  const A = require(join(REPO, "core/artist.js")), rows = D.layout([{ id: "p0", board: { splash: true, shot: "wide", action: "Kai lifts the cue.", who: [], lines: [] } }], T, R, {}).rows;
+  const pg = { id: "p1", number: 1, layout: { rows } }, brief = (A.panelBrief || globalThis.Artist.panelBrief)(pg, "p0", { pages: [pg] }, { cast: {} }, R, () => 10, {});
+  assert.deepEqual(brief.size, [1024, 1536]); assert.match(brief.prompt, /WHOLE PAGE, printed to the page's edges/);
 });

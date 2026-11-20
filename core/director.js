@@ -23,6 +23,16 @@
     insert:    { label: "A detail", weight: 1, bg: ["white", "tone"], connecting: true, hint: "A hand, an eye, an object. Small, on white." },
     big:       { label: "The big moment", weight: 5, bg: ["full", "tone", "simple", "white"], connecting: false, hint: "The page's biggest panel: one person, chest up, a short line." },
   };
+  // How tense a beat is, and the camera that says it (a layout study by an animator, 20 Nov 2026): the vanishing point, the
+  // tilt of the frame and how far the camera stands from the hero. No tension = the plain eye-level camera.
+  const TENSION = {
+    tense:  { label: "Tense", hint: "Something is off (two people squaring up, a silence). A low camera adds the tension.",
+      camera: "CAMERA: a low angle, a little below eye level, so the people loom slightly; straight lines of the floor and walls run to one vanishing point near them." },
+    danger: { label: "Danger", hint: "The situation itself is the threat. The camera steps back and tilts: the hero small, the threat looming.",
+      camera: "CAMERA: tilted (a canted frame) and low, pulled back from the hero so they look small against the space; the ground curves away under them and the lines of the place converge on the threat. The picture should feel unstable." },
+    fear:   { label: "Fear (theirs)", hint: "The fear is inside the hero. The camera stays close behind them, so the reader shares it.",
+      camera: "CAMERA: close behind the hero's shoulder, low and slightly tilted, the threat beyond them and partly hidden by them; the reader stands where the hero stands." },
+  };
   const jobOf = (b) => (b && JOBS[b.job] ? b.job : "");
   const clampW = (v) => Math.min(5, Math.max(1, Math.round(+v)));
   /** A panel's weight, 1 (a tiny beat) to 5 (the big moment). Old storyboards have none: a splash counts 5, the rest 3. */
@@ -116,12 +126,26 @@
           else { m.score += 0.3; m.why.push("the run of tiny beats has no strip"); }
         }
       }
-      if (seen.has(rt.shape + JSON.stringify(rows.map((r) => [r.slant || 0, r.panels.map((q) => q.slant || 0)])))) continue; // the same layout under another code
-      seen.add(rt.shape + JSON.stringify(rows.map((r) => [r.slant || 0, r.panels.map((q) => q.slant || 0)])));
+      if (n === 1) { // a page that is one panel: to the page's edges with no border for the splash (the biggest picture of the chapter), framed inside the margins otherwise
+        const edge = fullBleed(t.rows), b0 = panels[0].board || panels[0];
+        if (edge !== !!b0.splash) { m.score += 0.5; m.why.push(edge ? "to the page's edges is for the splash" : "the splash can run to the page's edges"); }
+      }
+      const key = rt.shape + JSON.stringify(rows.map((r) => [r.slant || 0, r.panels.map((q) => (q.slant || 0) + (q.type === "bleed" ? "b" : ""))]));
+      if (seen.has(key)) continue; // the same layout under another code
+      seen.add(key);
       out.push({ template: t, rows, rating: rt, score: m.score, why: m.why });
     }
     return out.sort((a, b) => a.score - b.score);
   }
+  /** The two layouts that are one panel on the whole page. Every project is offered them, also one whose own list was written before they existed. */
+  const FULL_PAGE = [
+    { code: "L1-01", name: "1 panel, the whole page inside the margins", rows: [{ h: 1, panels: [{ w: 1, type: "framed" }] }] },
+    { code: "L1-02", name: "1 panel, the whole page to its edges, no border", rows: [{ h: 1, panels: [{ w: 1, type: "bleed" }] }] },
+  ];
+  /** A project's layouts with the full-page ones added when its own list has none. */
+  function withFullPage(templates) { const t = templates || []; return t.concat(FULL_PAGE.filter((f) => !t.some((q) => q.code === f.code))); }
+  /** Is this layout one panel that runs to the page's edges (a full-page picture with no border)? */
+  function fullBleed(rows) { const l = leaves(rows); return l.length === 1 && l[0].type === "bleed"; }
   /** Runs of 3 to 5 tiny beats in a row (weight 1): each can be a strip of very small panels. -> [[first index, how many]] */
   function strips(panels) {
     const out = []; let s = -1;
@@ -152,10 +176,10 @@
     let i = 0;
     const build = (rows) => rows.map((r) => Object.assign({ h: r.h }, r.slant ? { slant: r.slant } : {}, r.strip ? { strip: true } : {}, { panels: r.panels.map((q) => {
       if (q.rows) return Object.assign({ w: q.w }, q.slant ? { slant: q.slant } : {}, { rows: build(q.rows) });
-      const o = Object.assign({}, panels[i++], { w: q.w }); if (q.slant) o.slant = q.slant; else delete o.slant; if (q.shape) o.shape = q.shape; else delete o.shape; return o; }) }));
+      const o = Object.assign({}, panels[i++], { w: q.w }); if (q.slant) o.slant = q.slant; else delete o.slant; if (q.shape) o.shape = q.shape; else delete o.shape; if (q.type) o.type = q.type; return o; }) }));
     return { rows: build(best.rows), code: best.template.code, score: best.score, why: best.why };
   }
 
-  const api = { JOBS, jobOf, weightOf, rate, misfit, tune, sorted, strips, counted, pick, layout, tiers, shape, leaves, area };
+  const api = { JOBS, TENSION, jobOf, weightOf, rate, misfit, tune, sorted, strips, counted, pick, layout, tiers, shape, leaves, area, fullBleed, FULL_PAGE, withFullPage };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else g.Director = api;
 })(typeof window !== "undefined" ? window : globalThis);

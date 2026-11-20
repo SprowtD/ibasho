@@ -126,4 +126,69 @@ const line = (speaker, text, kind = "speech", id) => ({ source_id: id || "L" + M
   ok(said.length === 1 && said[0].advice && /book's own line, so it stays/.test(said[0].msg), "in a book the advice says the line stays: a book's words are never changed");
   ok(book.pages[0].layout.rows[0].panels[0].board.lines[0].text === "I am so sad.", "and the check changed nothing");
 }
+// ---- a manga editor's notes (20 Nov 2026): advice only
+{
+  const adv = (spec, re) => { const r = Paneler.check(spec, R); return [...Object.values(r.pages).flat(), ...r.advice].filter((f) => re.test(f.msg)); };
+  // the same picture either side of the page turn
+  const turn = (shot2) => specOf([[{ h: 2, panels: [pn({ shot: "wide", who: [who("A", 0.5)] })] }, { h: 1, panels: [pn({ shot: "close", who: [who("A", 0.5)] })] }],
+    [{ h: 1, panels: [pn({ shot: shot2, who: [who("A", 0.5)] })] }, { h: 2, panels: [pn({ shot: "wide", who: [who("A", 0.5)] })] }]]);
+  const t = adv(turn("close"), /same picture as the last panel of page 1/); ok(t.length === 1 && t[0].advice, "the same picture either side of the page turn gets advice");
+  ok(adv(turn("medium"), /same picture as the last panel/).length === 0, "a new distance after the turn is fine");
+  // a page with one shot size, and a page of close-ups
+  const one = specOf([[{ h: 2, panels: [pn({ who: [who("A", 0.5)] })] }, { h: 1, panels: [pn({ who: [who("B", 0.5)], angle: "low angle" }), pn({ who: [who("A", 0.5)], angle: "high angle" })] }]]);
+  ok(adv(one, /every panel with people on this page is a medium shot/).length === 1, "a page where every panel with people is a medium shot gets advice (angles alone are not a mix)");
+  one.pages[0].layout.rows[0].panels[0].board.shot = "wide"; ok(adv(one, /every panel with people/).length === 0, "one wide panel answers it");
+  const faces = specOf([[{ h: 2, panels: [pn({ shot: "wide", who: [who("A", 0.5)] })] }, { h: 1, panels: [pn({ shot: "close", who: [who("A", 0.5)] }), pn({ shot: "close", angle: "low angle", who: [who("B", 0.5)] })] }, { h: 1, panels: [pn({ shot: "extreme close", who: [who("A", 0.5)] }), pn({ shot: "insert" })] }]]);
+  ok(adv(faces, /3 of 5 panels are face close-ups/).length === 1, "a page that is mostly face close-ups gets advice");
+  // a chapter of medium shots with no wide one
+  const mids = (wide) => specOf([0, 1, 2].map((k) => [{ h: 2, panels: [pn({ shot: wide && k === 1 ? "wide" : "medium", who: [who("A", 0.5)] })] }, { h: 1, panels: [pn({ shot: "medium", angle: "low angle", who: [who("B", 0.5)] }), pn({ shot: "close", who: [who("A", 0.5)] })] }]));
+  ok(adv(mids(false), /are medium shots and only 0 are wide/).length === 1, "a chapter of medium shots with no wide one gets advice");
+  ok(adv(mids(true), /are medium shots and only/).length === 0, "one wide panel in three pages answers it");
+  // a new scene with no panel showing the place
+  const scene = (estFirst) => { const s = specOf([[{ h: 2, panels: [pn({ shot: estFirst ? "wide" : "medium", who: [who("A", 0.5)] })] }, { h: 1, panels: [pn({ shot: "close", who: [who("A", 0.5)], lines: [line("A", "Here.", "speech", "a")] }), pn({ shot: "medium", angle: "low angle", who: [who("A", 0.5)] }), pn({ shot: "insert" })] }]]);
+    s.script = [{ type: "scene", id: "S1" }, { type: "line", source_id: "a", speaker: "A", text: "Here." }]; return s; };
+  ok(adv(scene(false), /a new scene starts at panel 2 and no panel shows the place/).length === 1, "a scene with no wide panel near its start gets advice");
+  ok(adv(scene(true), /no panel shows the place/).length === 0, "a silent wide panel just before the first line counts");
+  ok(adv(specOf([[{ h: 1, panels: [pn({ who: [who("A", 0.5)] })] }]]), /no panel shows the place/).length === 0, "a script with no scene marks is not checked for it");
+  // a tiny reaction in a balloon
+  const grunt = (text, kind = "speech") => adv(specOf([[{ h: 1, panels: [pn({ who: [who("A", 0.5)], lines: [line("A", text, kind)] })] }]]), /is a small reaction/);
+  ok(grunt("Oh.").length === 1 && grunt("Mm, hm.").length === 1 && grunt("…").length === 1, "“Oh.”, “Mm, hm.” and “…” in a balloon get advice to float as hand-drawn text");
+  ok(grunt("Oh no, not again.").length === 0 && grunt("No.").length === 0 && grunt("Oh.", "ambient").length === 0 && grunt("Ow!", "shout").length === 0, "a real line, a “No.”, an ambient one or a shout is left alone");
+  // a chapter where things happen with no sound effect
+  const noisy = (sfx) => specOf([0, 1, 2, 3].map((k) => [{ h: 2, panels: [pn({ job: "act", shot: k % 2 ? "wide" : "full figure", who: [who("A", 0.5)], sfx: sfx && k === 2 ? "SLAM" : undefined })] }, { h: 1, panels: [pn({ job: "react", bg: "white", shot: "close", who: [who("A", 0.5)] })] }]));
+  ok(adv(noisy(false), /no sound effect anywhere/).length === 1, "a chapter of action with no sound effect gets advice");
+  ok(adv(noisy(true), /no sound effect anywhere/).length === 0, "one sound effect answers it");
+  // the hook, for a story the Writer wrote from an idea
+  const idea = (hook) => specOf([[{ h: 1, panels: [pn({})] }]], { story: { from_idea: true, hero: "A", begins: "x", ends: "y", hook } });
+  ok(adv(idea(""), /no one-line hook/).length === 1 && adv(idea("A ferry that only runs for liars."), /the hook, in one line/).length === 1, "the hook is asked for, or shown back");
+  ok(adv(Object.assign(idea(""), { book: "b1" }), /hook/).length === 0, "never for a book");
+  // read on a phone (the default) or in print: how many panels a page reads well
+  const busy = (readOn) => Object.assign(specOf([0, 1, 2].map(() => [{ h: 2, panels: [pn({ shot: "wide", who: [who("A", 0.5)] }), pn({ shot: "close", who: [who("A", 0.5)] })] }, { h: 1, panels: [pn({ shot: "insert" }), pn({ shot: "medium", who: [who("B", 0.5)] }), pn({ shot: "close", angle: "low angle", who: [who("A", 0.5)] }), pn({ shot: "insert" })] }])), readOn ? { read_on: readOn } : {});
+  ok(adv(busy(), /read on a phone, where 3 to 5 roomy panels/).length === 1, "six panels a page on a phone gets advice (the default)");
+  ok(adv(busy("print"), /read on a phone/).length === 0 && adv(busy("print"), /average 6\.0 panels\. About five/).length === 1, "in print the old limit holds");
+  // the page budget agreed in the talk with the Writer
+  const plan = (pages) => specOf(Array(pages).fill(0).map(() => [{ h: 1, panels: [pn({})] }]), { story: { from_idea: true, hero: "A", begins: "x", ends: "y", hook: "h", acts: [{ part: "Setup", pages: 2 }, { part: "Development", pages: 4 }, { part: "Twist", pages: 3 }, { part: "Ending", pages: 2 }] } });
+  ok(adv(plan(11), /plan you agreed with the Writer/).length === 0 && adv(plan(13), /plan you agreed/).length === 0, "a storyboard near the agreed pages is fine");
+  ok(/storyboard has 18\. A part may be running long/.test((adv(plan(18), /plan you agreed/)[0] || {}).msg) && /storyboard has 6\. A part may be rushed/.test((adv(plan(6), /plan you agreed/)[0] || {}).msg), "far longer or shorter than the plan gets advice");
+}
+// ---- the camera follows the feeling: a panel's tension reaches the Artist and survives the builder
+{
+  ok(Object.keys(D.TENSION).join() === "tense,danger,fear", "three tensions: tense, danger, fear");
+  const spec = specOf([[{ h: 1, panels: [pn({ shot: "wide", tension: "danger", who: [who("Mara", 0.5)] }), pn({ shot: "medium", who: [who("Mara", 0.5)] })] }]]);
+  const pg = spec.pages[0], cells = R.allPanels(pg.layout), bible = { cast: { Mara: { desc: "MARA" } } };
+  ok(/CAMERA: tilted \(a canted frame\)/.test(Artist.panelBrief(pg, cells[0].panel.id, spec, bible, R, measureText).prompt), "a danger beat asks the Artist for a tilted, pulled-back camera");
+  ok(!/CAMERA:/.test(Artist.panelBrief(pg, cells[1].panel.id, spec, bible, R, measureText).prompt), "an ordinary beat gets no camera words");
+  const dir = scratch("tension"); fs.cpSync(path.join(APP, "tests/manga-direction/fixtures/ferry"), dir, { recursive: true });
+  const bf = path.join(dir, "board.json"), bd = JSON.parse(fs.readFileSync(bf, "utf8")); bd.pages[0].panels[0].tension = "fear"; bd.pages[0].panels[1].tension = "spooky"; fs.writeFileSync(bf, JSON.stringify(bd));
+  execFileSync("node", [path.join(APP, "tools/build_spec.mjs"), dir]); const built = JSON.parse(fs.readFileSync(path.join(dir, "spec.json"), "utf8")), b0 = R.allPanels(built.pages[0].layout).map((c) => c.panel.board);
+  ok(b0.some((b) => b.tension === "fear") && !b0.some((b) => b.tension === "spooky"), "the builder keeps a known tension and drops an unknown one");
+  ok(built.read_on === "phone", "a chapter is read on a phone unless its series says print");
+  fs.writeFileSync(path.join(dir, "bible.json"), JSON.stringify({ ...JSON.parse(fs.existsSync(path.join(dir, "bible.json")) ? fs.readFileSync(path.join(dir, "bible.json"), "utf8") : "{}"), read_on: "print" }));
+  execFileSync("node", [path.join(APP, "tools/build_spec.mjs"), dir]); ok(JSON.parse(fs.readFileSync(path.join(dir, "spec.json"), "utf8")).read_on === "print", "the series setting says print");
+  const task = fs.readFileSync(execFileSync("node", [path.join(APP, "tools/paneler_task.mjs"), dir]).toString().trim(), "utf8");
+  ok(/about 5 panels/.test(task) && !/READ ON A PHONE/.test(task) && /`tension` \(optional\)/.test(task) && /TINY REACTIONS FLOAT/.test(task) && /crowd, ambient or title/.test(task), "the Paneler is told: print pacing, tension, floating reactions");
+  fs.writeFileSync(path.join(dir, "bible.json"), JSON.stringify({ read_on: "phone" }));
+  ok(/READ ON A PHONE/.test(fs.readFileSync(execFileSync("node", [path.join(APP, "tools/paneler_task.mjs"), dir]).toString().trim(), "utf8")), "and phone pacing for a phone series");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
 done("panel director, manga flow, story and page-turn checks");

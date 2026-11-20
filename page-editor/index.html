@@ -366,6 +366,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
     <button class="wsb" id="mangaBtn" type="button">Manga</button>
     <a class="wsb" id="animeLink" href="/anime/">Anime</a>
     <a class="wsb" href="/create">Create</a>
+    <a class="wsb" href="/library">Library</a>
   </nav>
   <label class="proj"><span class="sr">Project</span><select id="projSel"></select></label><span class="crumb" id="crumb" aria-live="polite"></span>
   <span class="spacer"></span>
@@ -413,6 +414,27 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
         <button type="button" class="stylebtn" id="npStyleBtn"></button></div>
       <div class="field"><span class="lbl">Reading direction</span>
         <div class="segs" id="npReading" role="group" aria-label="Reading direction"></div><small class="hint" id="npReadingHint" style="margin:0"></small></div>
+      <div class="field" id="npIdeaField"><label for="npIdea">Start from an idea <output>no script yet? Talk it through with the Writer</output></label>
+        <textarea id="npIdea" rows="3" maxlength="3000" placeholder="Who is it about, what do they want, what happens? A few sentences are enough."></textarea>
+        <div class="talk-btns"><button type="button" class="btn" id="npIdeaGo">Talk it through with the Writer</button><button type="button" class="btn link" id="npIdeaSkip">Skip the talk: write the script now</button></div>
+        <small class="hint" id="npIdeaHint" role="status" style="margin:0">The Writer comes back with a story plan and a few questions. Answer and change the plan as often as you like; the script is written only when you say so. Nothing is storyboarded or drawn until you press Create.</small>
+        <div id="npTalk" class="talk" hidden>
+          <ol id="npTalkLog" class="talk-log" aria-label="The talk so far"></ol>
+          <fieldset id="npPlan" class="plan"><legend>The story plan <output>change anything: your version wins</output></legend>
+            <label>Hook, in one line<textarea id="npPlanHook" rows="2" maxlength="300"></textarea></label>
+            <label>Hero<input id="npPlanHero" maxlength="60"></label>
+            <label>What they want<textarea id="npPlanAim" rows="2" maxlength="300"></textarea></label>
+            <label>The surprise<textarea id="npPlanTurn" rows="2" maxlength="300"></textarea></label>
+            <label>Where they start<textarea id="npPlanBegins" rows="2" maxlength="300"></textarea></label>
+            <label>Where they end<textarea id="npPlanEnds" rows="2" maxlength="300"></textarea></label>
+            <div class="acts-head"><span>Part</span><span>Pages</span></div>
+            <div id="npPlanActs" class="acts"></div>
+            <small class="hint" id="npPlanTotal" style="margin:0"></small>
+          </fieldset>
+          <label for="npReply">Your answer to the Writer</label>
+          <textarea id="npReply" rows="3" maxlength="3000" placeholder="Answer its questions, or say what you want changed. A plain “yes” takes its suggestions."></textarea>
+          <div class="talk-btns"><button type="button" class="btn" id="npReplyGo">Send to the Writer</button><button type="button" class="btn primary" id="npWriteGo">Write the script from this plan</button></div>
+        </div></div>
       <div class="field"><label for="npScript">Chapter script <output>any format: screenplay, prose or notes</output></label>
         <textarea id="npScript" rows="10" placeholder="Paste the chapter here, or choose a file below."></textarea>
         <input type="file" id="npFile" accept=".md,.txt,.markdown,text/plain,text/markdown"></div>
@@ -436,12 +458,14 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
     <a class="btn" id="newAnime" href="/anime/#/new" hidden>+ New anime scene</a>
   </div>
   <p class="flow-key" id="flowKey"><span><i style="background:var(--ok)"></i>done</span><span><i style="background:var(--blue)"></i>part done</span><span><i style="background:var(--amber)"></i>working</span><span><i style="background:var(--red)"></i>needs a look</span><span><i></i>not started</span><span>Press a step to go straight to it.</span></p>
+  <div class="home-find" id="homeFindWrap" hidden><label for="homeFind">Find</label><input type="search" id="homeFind" placeholder="A series, chapter, book or scene name" autocomplete="off"><span id="homeFindN" aria-live="polite"></span></div>
   <h3 class="sect-h" id="hMangaH">Manga chapters</h3>
   <div class="plist" id="homeGrid"></div>
   <h3 class="sect-h" id="hBooksH" hidden>Books <small>a long text split into chapters that share one style, cast and sheets</small></h3>
   <div class="plist" id="bookGrid"></div>
   <h3 class="sect-h" id="hAnimeH" hidden>Anime scenes <small>from a script, from nothing or from manga pages: shot list, plan check, blocking, grey 3D animatic, sound</small></h3>
   <div class="plist" id="animeGrid"></div>
+  <details class="home-away" id="homeAway" hidden><summary id="homeAwayN">Put away</summary><p class="hint">Put away from this list only. Every file is still on this computer; “Bring back” returns it.</p><div class="plist" id="awayGrid"></div></details>
 </section>
 
 <section id="bookView" hidden>
@@ -466,10 +490,18 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
     <label class="check-inline"><input type="checkbox" id="seColour"> This series is in colour</label>
     <div class="row" id="seOwnRow"><button type="button" class="btn" id="seOwnTpl">Write a new style in sections</button><button type="button" class="btn" id="seOwnSave">Save this as my own style</button><label class="btn" id="seOwnPicBtn" style="text-align:center;cursor:pointer" hidden>Add an example picture<input type="file" id="seOwnPic" accept="image/*" hidden></label></div>
   </details>
+  <div class="field se-box" id="seMoodBox" hidden><span class="lbl">Mood pictures <output>up to 4: the look to aim for</output></span>
+    <p class="hint" style="margin:0">Pictures you upload here go with every panel the Artist draws, after the character sheets, as a guide to the LOOK only (line, tone, light, feeling). The Artist is told never to copy their people, places or layout. They take up reference places: a model that takes few references gets the sheets first.</p>
+    <div class="row" id="seMoodList" style="flex-wrap:wrap"></div>
+    <label class="btn" id="seMoodAdd" style="text-align:center;cursor:pointer">Add a mood picture<input type="file" id="seMoodFile" accept="image/*" hidden></label>
+  </div>
   <p class="hint" id="seStyleNote" style="margin:0"></p>
   <div class="field se-box"><span class="lbl">Reading direction <output>the whole series</output></span>
     <div class="segs" id="seReading" role="group" aria-label="Reading direction"></div><small class="hint" id="seReadingNote" style="margin:0"></small></div>
+  <div class="field se-box"><span class="lbl">Read on <output>the whole series</output></span>
+    <div class="segs" id="seReadOn" role="group" aria-label="Read on"></div><small class="hint" id="seReadOnNote" style="margin:0"></small></div>
   <label class="check-inline se-box" style="display:flex" id="seTonerBox"><input type="checkbox" id="seToner"> <span>Screentone made by the Toner <small style="display:block;color:var(--muted)">The Artist draws flat greys and no dots. The Toner then lays real screentone over them, one size of dot for the whole chapter, so nothing clashes and you can scrape it or paint it back by hand. Pictures drawn before this was turned on keep their own dots until they are drawn again.</small></span></label>
+  <label class="check-inline se-box" style="display:none" id="seToneAutoBox"><input type="checkbox" id="seToneAuto"> <span>Tone a new picture by itself <small style="display:block;color:var(--muted)">When a picture lands on a page, the Toner tones that page straight away (under a minute, no model, nothing paid). Off: you press “Tone this page”. It only happens while the chapter is open on a screen.</small></span></label>
   <label class="check-inline se-box" style="display:flex"><input type="checkbox" id="seStrict"> <span>Only draw a character who has an approved sheet <small style="display:block;color:var(--muted)">A panel with anyone else in it is refused until their sheet is added and approved. Books start with this on.</small></span></label>
   <label class="check-inline se-box" style="display:flex"><input type="checkbox" id="seNoNames"> <span>Leave names out of picture prompts <small style="display:block;color:var(--muted)">For fan fiction and well-known books: picture services refuse prompts that name famous characters, places and things. With this on, each name below is swapped for its stand-in just before a picture is asked for. Only the picture prompt changes: the storyboard and the lettering keep the book's own words. The attached sheets still keep everyone looking the same.</small></span></label>
   <div class="field se-box" id="seStandInsBox" hidden><label for="seStandIns">Stand-ins <output>one per line: Name = what the picture service is told instead</output></label><textarea id="seStandIns" rows="8" placeholder="Sherlock = the tall, thin detective in a deerstalker&#10;Baker Street = the foggy Victorian street"></textarea></div>
@@ -495,7 +527,9 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
     <div class="row"><button class="btn primary" id="letterAllBtn" type="button">Letterer: letter every page</button>
     <button class="btn" id="drawAllBtn" type="button" hidden></button>
     <button class="btn" id="toneAllBtn" type="button" hidden>Toner: tone every page</button>
+    <button class="btn" id="stillsBtn" type="button" hidden title="Put pictures that already exist (an anime scene's stills) on the panels before anything is drawn">Use existing stills</button>
     <button class="btn" id="exportAllBtn" type="button" hidden>Export</button>
+    <button class="btn" id="publishBtn" type="button" hidden>Publish…</button>
     <button class="btn" id="coverBtn" type="button" hidden>Add a cover</button>
     <button class="btn" id="reboardBtn" type="button" hidden>Storyboard again</button></div>
   </div>
@@ -592,6 +626,9 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
             <p class="hint" id="pjobHint"></p>
             <span class="lbl">Weight <output>how much of the page it owns</output></span>
             <div class="segs" id="pweight" role="group" aria-label="Weight, 1 light to 5 the big moment"></div>
+            <label for="ptension">Tension <output>the camera follows the feeling</output></label>
+            <select id="ptension"></select>
+            <p class="hint" id="ptensionHint"></p>
             <label class="check-inline"><input type="checkbox" id="pface"> The page’s one big expression (a shout, tears, a comedy face)</label>
             <label class="check-inline"><input type="checkbox" id="preveal"> A reveal: belongs first on its page, seen right after the turn</label>
           </div>
@@ -642,6 +679,10 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
 
     <div id="artPanel" hidden>
       <p class="empty" id="artHint">Tap a panel, on the page or in the sidebar, to draw it.</p>
+      <div id="toneWhole" hidden>
+        <div class="field"><span class="lbl">Screentone <output>the Toner</output></span><p class="hint" id="toneWholeInfo" style="margin:0"></p></div>
+        <button class="btn" id="toneWholeBtn" type="button">Tone this page</button>
+      </div>
       <div id="pageGen" hidden>
         <h2 id="pgTitle"></h2>
         <p class="hint" id="pgInfo"></p>
@@ -657,6 +698,8 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
           <p class="hint" id="artBoard"></p>
           <div id="toneBox" hidden>
             <div class="field"><span class="lbl">Screentone <output>the Toner</output></span><p class="hint" id="toneInfo" style="margin:0"></p></div>
+            <div class="field" id="toneSetBox" hidden><label for="toneSet">Dots <output>the whole chapter</output></label>
+              <select id="toneSet"></select><small class="hint" id="toneSetNote" style="margin:0"></small></div>
             <div class="row"><button class="btn" id="tonePage" type="button">Tone this page</button><button class="btn" id="toneOne" type="button" hidden>Tone this panel again</button></div>
             <button class="btn" id="toneHand" type="button" hidden>Scrape or paint back by hand</button>
           </div>
@@ -757,6 +800,12 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   <div class="style-grid" id="styleDlgGrid"></div>
 </dialog>
 
+<dialog id="stillsDlg" aria-labelledby="stillsT">
+  <div class="dlg-head"><h2 id="stillsT">Use existing stills</h2><button type="button" class="btn" id="stillsX">Close</button></div>
+  <p class="hint" id="stillsNote" aria-live="polite" style="margin:0 0 10px"></p>
+  <div id="stillsBody"></div>
+  <div class="row st-foot"><button type="button" class="btn" id="stillsBack" hidden>Pick another place</button><button type="button" class="btn primary" id="stillsGo" hidden></button></div>
+</dialog>
 <dialog id="toneDlg" aria-labelledby="toneDlgT">
   <div class="dlg-head"><h2 id="toneDlgT">Scrape or paint back</h2><button type="button" class="btn" id="toneDlgX">Close</button></div>
   <div style="display:grid;gap:10px">
@@ -772,6 +821,35 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   </div>
 </dialog>
 
+<dialog id="pubDlg" aria-labelledby="pubDlgT">
+  <h2 id="pubDlgT">Publish to your reading site</h2>
+  <div style="display:grid;gap:14px">
+    <p class="hint" style="margin:0">The chapter is sent to the site as a <b>private draft</b>. You look at it there and make it public there: nothing is made public from here.</p>
+    <details id="pubSet"><summary>The site and your publishing key <output id="pubSetState"></output></summary>
+      <div style="display:grid;gap:10px;margin-top:10px">
+        <div class="field"><label for="pubSite">Site address</label><input type="url" id="pubSite" placeholder="https://read.ibasho.studio" autocomplete="off"></div>
+        <div class="field"><label for="pubKey">Publishing key <output id="pubKeyNow"></output></label><input type="password" id="pubKey" placeholder="Paste the key from the site (it starts with ibr_)" autocomplete="off">
+          <small class="hint" style="margin:0">Made on the site: Author studio, Publishing keys, Create key. It is shown there once. <a id="pubKeysLink" target="_blank" rel="noopener">Where do I get this?</a> Kept on this computer with your other keys; never put in a project.</small></div>
+        <div class="row"><button type="button" class="btn" id="pubSave">Save and test</button><button type="button" class="btn" id="pubTest">Test connection</button><button type="button" class="btn link" id="pubForget" hidden>Forget this key</button></div>
+        <p class="hint" id="pubSetNote" style="margin:0" role="status"></p>
+      </div></details>
+    <div id="pubForm" style="display:grid;gap:14px">
+      <div class="field"><label for="pubBook">Book</label><select id="pubBook"></select><small class="hint" id="pubBookNote" style="margin:0"></small></div>
+      <div class="row" style="align-items:flex-start">
+        <div class="field" style="flex:0 0 9em"><label for="pubNumber">Chapter number</label><input type="number" id="pubNumber" min="1" max="9999" step="1" inputmode="numeric"></div>
+        <div class="field" style="flex:1"><label for="pubTitle">Title</label><input type="text" id="pubTitle" maxlength="200"></div>
+      </div>
+      <p class="hint" id="pubNumberNote" style="margin:0"></p>
+      <div class="row" style="align-items:flex-start">
+        <div class="field" style="flex:0 0 9em"><label for="pubThumb">Picture for the list <output>a page number</output></label><input type="number" id="pubThumb" min="1" step="1" inputmode="numeric"></div>
+        <div class="field" style="flex:1"><label for="pubNotes">Note to readers <output>optional</output></label><textarea id="pubNotes" rows="2" maxlength="5000"></textarea></div>
+      </div>
+      <p class="hint" id="pubCheck" style="margin:0"></p>
+    </div>
+    <p class="hint" id="pubResult" style="margin:0" role="status"></p>
+    <div class="row" style="justify-content:flex-end"><a class="btn primary" id="pubOpen" target="_blank" rel="noopener" hidden>Open the site to review and publish</a><button type="button" class="btn" id="pubCancel">Close</button><button type="button" class="btn primary" id="pubGo">Send as a draft</button></div>
+  </div>
+</dialog>
 <dialog id="exDlg" aria-labelledby="exDlgT">
   <div class="dlg-head"><h2 id="exDlgT">Export</h2><button type="button" class="btn" id="exDlgX">Close</button></div>
   <div style="display:grid;gap:14px">
@@ -780,8 +858,15 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
         <button type="button" class="seg" data-format="pdf">PDF</button>
         <button type="button" class="seg" data-format="png">PNG</button>
         <button type="button" class="seg" data-format="jpeg">JPEG</button>
+        <button type="button" class="seg" data-format="print">Print PDF</button>
       </div>
       <p class="hint" id="exFormatHint" style="margin:0"></p></div>
+    <div class="field" id="exPaperRow" hidden><span class="lbl">Paper <output>the cut page</output></span>
+      <div class="segs" id="exPaper">
+        <button type="button" class="seg" data-paper="b5">B5 <small>(182 × 257 mm)</small></button>
+        <button type="button" class="seg" data-paper="a5">A5 <small>(148 × 210 mm)</small></button>
+        <button type="button" class="seg" data-paper="us">US comic <small>(6⅝ × 10¼ in)</small></button>
+      </div></div>
     <div class="field"><span class="lbl"><span>Pages</span><output id="exCount"></output></span>
       <div class="row"><button type="button" class="btn" id="exAll">All pages</button><button type="button" class="btn" id="exNone">None</button></div>
       <div class="ex-pages" id="exPages"></div></div>
@@ -800,7 +885,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   <div style="display:grid;gap:12px">
     <p class="hint" style="margin:0">The Paneler reads the script again and lays out new pages. Every line is kept word for word. It takes a few minutes.</p>
     <label class="field"><span class="lbl">Note to the Paneler (optional)</span>
-      <textarea id="sbNote" maxlength="600" placeholder="For example: more pages, give the opening a full page, end page 1 on the empty boat."></textarea></label>
+      <textarea id="sbNote" maxlength="1200" placeholder="For example: more pages, give the opening a full page, end page 1 on the empty boat."></textarea></label>
     <div class="note-chips" id="sbChips">
       <button type="button" class="btn" data-chip="More pages: spread the scene out.">More pages</button>
       <button type="button" class="btn" data-chip="Slower opening: give the first moment a page to itself.">Slower opening</button>

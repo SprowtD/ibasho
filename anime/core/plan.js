@@ -12,7 +12,7 @@
   const TARGETS = { dialogue: [1.5, 3.0], comedy: [1.5, 3.0], action: [0.3, 1.0], romance: [4.0, 8.0], emotional: [4.0, 8.0], establishing: [2.0, 4.0], insert: [0.8, 2.5] };
   const PLACEMENTS = ["on_speaker", "over_reaction", "over_insert", "voiceover"];
   const LAYERS = ["environment", "group", "individual", "camera", "cut"];
-  const AIDEN = {
+  const STAGING = {
     geography: "establishing or two-shot before the close-ups; every off-screen target placed and kept on one side",
     cause: "no effect without its source on screen (or someone we know is there)",
     organic_reactions: "what each character would really think; no gags or comedy faces in serious beats",
@@ -22,13 +22,13 @@
     colour_story: "planned colour shift at the turning point",
     background_continuity: "same props, extras and damage across every angle",
   };
-  const KUROSAWA = {
+  const MOVEMENT = {
     signature_gestures: "one gesture per main character from the source (the author picks)",
     world_shows_feeling: "light / weather / crowd carries the feeling at the turning point",
     cut_rhythm: "cut on movement; a still end then a hard cut into motion; peaks breathe",
     depth_staging: "foreground and background readable; frames within frames; readable shadows",
   };
-  const CRAFT = Object.assign({}, AIDEN, KUROSAWA);
+  const CRAFT = Object.assign({}, STAGING, MOVEMENT);
 
   const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
   const words = (s) => norm(s).split(" ").filter(Boolean).length;
@@ -181,7 +181,7 @@
     if (a.join() !== b.join()) E(null, "lines are out of script order across shots");
     if (!norm(plan.lighting_mood)) E(null, "no lighting mood for the scene");
 
-    // craft gate: intent card, palette, sound plan, Aiden Guo + Kurosawa checks
+    // craft gate: intent card, palette, sound plan, staging + movement checks
     const it = plan.intent || {};
     for (const k of ["feel", "peak", "must_know"]) if (!norm(it[k])) E(null, `intent card: "${k.replace("_", " ")}" missing`);
     let pal = plan.palette || []; if (!Array.isArray(pal)) pal = pal.colours || [];

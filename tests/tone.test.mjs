@@ -46,6 +46,28 @@ test("a page is toned by a job: every drawn panel gets layers and one flat pictu
   const served = await fetch(`${app.base}/projects/${ID}/${a1.src}`); assert.equal(served.status, 200);
   assert.ok((await api("/api/work")).j.recent.some((w) => /the Toner/.test(w.label)) || true);
 });
+test("the dot size and the kind of tone are chosen for the chapter, kept in toner.json, and used the next time a page is toned", async () => {
+  const idle = async () => { for (let i = 0; i < 300; i++) { const w = (await api("/api/work")).j; if (!w.running.length && !w.waiting.length) return; await new Promise((r) => setTimeout(r, 200)); } }; // a page still being toned is not toned twice
+  const st = (await api(`/api/tone?settings&p=${ID}`)).j;
+  assert.deepEqual([st.lines, st.kind, st.choices.includes(60)], [60, "dots", true], "a chapter starts at 60 lines, dots");
+  assert.equal((await api(`/api/tone?settings&p=${ID}`, "PUT", { lines: 61, kind: "dots" })).status, 400, "a size that is not offered is refused");
+  assert.equal((await api(`/api/tone?settings&p=${ID}`, "PUT", { lines: 60, kind: "stripes" })).status, 400, "a kind that is not offered is refused");
+  const put = await api(`/api/tone?settings&p=${ID}`, "PUT", { lines: 40, kind: "dots" });
+  assert.deepEqual([put.status, put.j.lines, put.j.kind], [200, 40, "dots"]);
+  assert.equal(JSON.parse(readFileSync(join(dir, "toner.json"), "utf8")).lines, 40, "it is kept in the project's toner.json");
+  await idle(); await api(`/api/tone?p=${ID}&page=pg1`, "POST");
+  let s = await toned((x) => x.pg1 && x.pg1.panels.length === 2 && x.pg1.panels.every((q) => q.layers.some((n) => /dots 40 lines/.test(n))));
+  assert.ok(s.pg1.panels[0].layers.some((n) => /dots 40 lines 20%/.test(n)), "the page is toned again with the bigger dots: " + s.pg1.panels[0].layers);
+  await api(`/api/tone?settings&p=${ID}`, "PUT", { lines: 40, kind: "noise" });
+  await idle(); await api(`/api/tone?p=${ID}&page=pg1`, "POST");
+  s = await toned((x) => x.pg1 && x.pg1.panels.length === 2 && x.pg1.panels.every((q) => q.layers.some((n) => /noise grey/.test(n))));
+  assert.ok(s.pg1.panels[0].layers.some((n) => /noise grey 20%/.test(n)), "and with noise: " + s.pg1.panels[0].layers);
+  await api(`/api/tone?settings&p=${ID}`, "PUT", { lines: 60, kind: "dots" }); // back, for the tests below
+  await idle(); await api(`/api/tone?p=${ID}&page=pg1`, "POST");
+  s = await toned((x) => x.pg1 && x.pg1.panels.length === 2 && x.pg1.panels.every((q) => q.layers.some((n) => /dots 60 lines/.test(n))));
+  assert.ok(s.pg1.panels[0].layers.some((n) => /dots 60 lines 20%/.test(n)), "back at 60 lines"); await idle();
+});
+
 test("the page shows a panel's toned picture only while it still fits; a changed panel shows its plain picture and is flagged", async () => {
   const s = (await api(`/api/tone?p=${ID}`)).j, page = JSON.parse(JSON.stringify(spec.pages[0]));
   for (const c of R.allPanels(page.layout)) { const t = s.pg1.panels.find((x) => x.id === c.panel.id); if (t) { const { id, ...keep } = t; c.panel.toned = keep; } }

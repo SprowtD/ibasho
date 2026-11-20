@@ -10,7 +10,7 @@ import { REPO } from "./harness.mjs";
 test("srv.py: a long token, files only under the workspace, plain job names", async () => {
   const ws = mkdtempSync(join(process.env.TEST_TMP || tmpdir(), "pod-")), port = 20000 + Math.floor(Math.random() * 20000), T = "t".repeat(32);
   assert.notEqual(spawnSync("python3", [join(REPO, "anime/tools/pod_render/srv.py")], { env: { ...process.env, CTRL_TOKEN: "short", WORKSPACE: ws } }).status, 0, "a short token is refused");
-  const c = spawn("python3", [join(REPO, "anime/tools/pod_render/srv.py")], { env: { ...process.env, CTRL_TOKEN: T, WORKSPACE: ws, PORT: String(port) }, stdio: "ignore" });
+  const c = spawn("python3", [join(REPO, "anime/tools/pod_render/srv.py")], { env: { ...process.env, CTRL_TOKEN: T, WORKSPACE: ws, PORT: String(port), BIND: "127.0.0.1" }, stdio: "ignore" }); // BIND: it listens only where it is told to
   try {
     const b = `http://127.0.0.1:${port}`; for (let i = 0; i < 50; i++) { try { await fetch(b, { headers: { "x-token": T } }); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
     writeFileSync(join(ws, "a.txt"), "hello");

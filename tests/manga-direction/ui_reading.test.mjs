@@ -49,6 +49,11 @@ try {
   await page.click('#seReading [data-reading="rtl"]');
   await page.waitForFunction(() => /now reads right to left/.test(document.getElementById("status").textContent));
   ok(JSON.parse(fs.readFileSync(path.join(dir, "bible.json"), "utf8")).reading === "rtl", "Series: the choice is saved in the series settings");
+  ok(await page.getAttribute('#seReadOn [data-readon="phone"]', "aria-pressed") === "true" && /3 to 5 roomy panels/.test(await page.textContent("#seReadOnNote")), "Series: read on a phone by default");
+  await page.click('#seReadOn [data-readon="print"]');
+  await page.waitForFunction(() => /read in print/.test(document.getElementById("status").textContent));
+  ok(JSON.parse(fs.readFileSync(path.join(dir, "bible.json"), "utf8")).read_on === "print" && await page.getAttribute('#seReadOn [data-readon="print"]', "aria-pressed") === "true", "Series: “Print” is saved in the series settings");
+  await page.click('#seReadOn [data-readon="phone"]'); await page.waitForFunction(() => /read on a phone/.test(document.getElementById("status").textContent));
   await shot("series-reading", "#seriesView");
   await page.click('#modeTabs [data-mode="layout"]');
   const after = await firstPanel();

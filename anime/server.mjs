@@ -13,11 +13,12 @@ const HERE = dirname(fileURLToPath(import.meta.url)), APP = resolve(HERE, ".."),
 const SAVED = process.env.STUDIO_SAVED || join(EDITOR, "saved");
 const SCENES = process.env.STUDIO_ANIME || join(EDITOR, "anime-scenes");
 const P = createRequire(import.meta.url)("./core/plan.js");
-import { exportScene } from "./core/export.mjs";
+import { exportScene, shapeOf } from "./core/export.mjs";
 import { routeModel, orModel, videoRes, videoLen, audioRefs, estimate } from "../page-editor/models.mjs";
 import { logSpend, guardSpend, okFrom } from "../page-editor/spend.mjs"; // the model picker (Pictures, Video)
 import { orPicture, orVideo } from "../page-editor/openrouter.mjs";
 import { inside, reserved } from "../page-editor/paths.mjs";
+import { hear } from "./hear.mjs";
 import { readBody, bodyToFile, sentBadJson, MB } from "../page-editor/limits.mjs";
 import { lockDoc, writeAtomic, writeJson, updateJson } from "../page-editor/store.mjs";
 import { webMp4, soundOf, SAFE_IN } from "../page-editor/media.mjs"; // clips re-wrapped when they already play everywhere; their sound beside them
@@ -455,7 +456,8 @@ async function makeVideo(d) {
   const sound = !!(lines.length && m.sound), useVoices = sound && voices.length && audioRefs(m.id);
   const prompt = words + (useVoices ? "\n" + voices.map((v, i) => `Audio ${i + 1} is ${v.name}'s voice${v.note ? " (" + v.note + ")" : ""}: ${v.name} speaks in exactly this voice.`).join(" ") + " Image 1 is the opening frame of the shot." : "");
   const est = await estimate("video", r.model, { resolution: res, seconds }); const free = d.orJob ? () => {} : await guardSpend(SAVED, est, "This video", d.ok); // a resumed video is already paid for
-  const got = await orVideo(r.key, r.model, { prompt, duration: seconds, resolution: res, aspect: "16:9", first: still, sound, voices: useVoices ? voices.map((v) => v.file) : [], resumeId: d.orJob || "", onJob: (id) => { d.orJob = id; if (queue && queue.save) return queue.save(); }, onStatus: (t) => { d.msg = t; } }).catch((e) => { if (!d.orJob) free(); throw e; }); // nothing was sent: the held amount goes back
+  const got = await orVideo(r.key, r.model, { prompt, duration: seconds, resolution: res, aspect: "16:9", first: still, sound, voices: useVoices ? voices.map((v) => v.file) : [], resumeId: d.orJob || "", onJob: (id) => { d.orJob = id; if (queue && queue.save) return queue.save(); }, onStatus: (t) => { d.msg = t; } }).catch(async (e) => { // nothing was sent, or it failed: the held amount goes back. Sent and never came back in time: it may still be charged, so the estimate is logged
+      if (d.orJob && /^No video after/.test(e.message || "")) await logSpend(SAVED, { project: "anime: " + d.scene, what: "video " + d.shot + " (no answer in time: may still be charged)", kind: "video", model: r.model, est }); else free(); throw e; });
   if (got.cost != null) d.cost = got.cost; else if ((m.per_second || {})[res] != null) d.cost = Math.round(m.per_second[res] * seconds * 1000) / 1000;
   await logSpend(SAVED, { project: "anime: " + d.scene, what: "video " + d.shot, kind: "video", model: r.model, usd: got.cost, est });
   const cdir = join(dir, "clips"); await mkdir(cdir, { recursive: true });
@@ -555,9 +557,9 @@ async function runExport(id, opt = {}) {
     const plan = await readJson(join(dir, "SCENE_PLAN.json"), {}), sound = await readJson(join(dir, "sound.json"), { clips: [] });
     await mkdir(join(dir, "export"), { recursive: true });
     const name = `${safe(id).slice(0, 50)}-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.mp4`; // this computer's own clock
-    const r = await exportScene({ dir, plan, sound, file: (u) => fileOf(id, u), out: join(dir, "export", name), say: (m) => { job.msg = m; }, subtitles: opt.subtitles !== false, size: opt.size, grade: await gradeFor(id) });
+    const r = await exportScene({ dir, plan, sound, file: (u) => fileOf(id, u), out: join(dir, "export", name), say: (m) => { job.msg = m; }, subtitles: opt.subtitles !== false, size: opt.size, grade: await gradeFor(id), shape: opt.shape, twos: !!opt.twos });
     for (const old of (await readdir(join(dir, "export"))).filter((n) => /\.mp4$/.test(n)).sort().reverse().slice(5)) await rm(join(dir, "export", old), { force: true }); // the five newest are kept
-    job.status = "done"; job.msg = `Video ready: ${r.shots} shots, ${Math.round(r.seconds * 10) / 10} s, ${r.clips} sound clip${r.clips === 1 ? "" : "s"}`; job.file = name;
+    job.status = "done"; job.msg = `Video ready: ${r.shots} shots, ${Math.round(r.seconds * 10) / 10} s, ${r.clips} sound clip${r.clips === 1 ? "" : "s"}${r.shape !== "16:9" ? `, ${r.shape} (${r.size[0]} x ${r.size[1]})` : ""}${r.twos ? ", video clips on twos" : ""}`; job.file = name;
   } catch (e) { job.status = "failed"; job.msg = String(e.message || e).slice(0, 300); }
 }
 
@@ -575,7 +577,7 @@ async function runEpisode(showId, epId, opt = {}) {
     const plans = []; for (const sid of ep.scenes) plans.push({ sid, plan: await readJson(join(sceneDir(sid), "SCENE_PLAN.json"), {}), sound: await readJson(join(sceneDir(sid), "sound.json"), { clips: [] }) });
     const size = plans.some((x) => (x.plan.shots || []).some((s) => s.clip)) ? "hd" : "sd", list = []; let total = 0;
     for (let i = 0; i < plans.length; i++) { const x = plans[i], out = join(parts, `s${String(i).padStart(3, "0")}.mp4`), title = (mine.find((m) => m.id === x.sid) || {}).title || x.sid;
-      const r = await exportScene({ dir: sceneDir(x.sid), plan: x.plan, sound: x.sound, file: (u) => fileOf(x.sid, u), out, say: (m) => { job.msg = `Scene ${i + 1} of ${plans.length} (${title}): ${m}`; }, subtitles: opt.subtitles !== false, size, grade: await gradeFor(x.sid) });
+      const r = await exportScene({ dir: sceneDir(x.sid), plan: x.plan, sound: x.sound, file: (u) => fileOf(x.sid, u), out, say: (m) => { job.msg = `Scene ${i + 1} of ${plans.length} (${title}): ${m}`; }, subtitles: opt.subtitles !== false, size, grade: await gradeFor(x.sid), shape: opt.shape, twos: !!opt.twos });
       total += r.seconds; list.push(`file '${out.replace(/'/g, "'\\''")}'`); }
     await writeFile(join(parts, "list.txt"), list.join("\n") + "\n"); job.msg = "Joining the scenes";
     const name = `${safe(epId)}--${slug(ep.title) || "episode"}-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.mp4`;
@@ -854,7 +856,7 @@ export async function anime(req, res, url) {
       if (p === "/api/anime/show" && req.method === "GET") return json(res, st);
       if (p === "/api/anime/showfile") { const n = safeName(url.searchParams.get("f")), file = join(lookDir(showId), "export", n); let fs; try { if (!/\.mp4$/.test(n)) throw 0; fs = await stat(file); } catch { res.statusCode = 404; res.end(); return true; } return streamFile(req, res, file, fs); }
       if (p === "/api/anime/episode" && req.method === "POST") { const j = jobs.get(LOOKJOB + showId); if (j && j.status === "running") return json(res, j);
-        runEpisode(showId, String(url.searchParams.get("ep") || ""), { subtitles: url.searchParams.get("subs") !== "0" }); return json(res, jobs.get(LOOKJOB + showId)); }
+        runEpisode(showId, String(url.searchParams.get("ep") || ""), { subtitles: url.searchParams.get("subs") !== "0", shape: shapeOf(url.searchParams.get("shape")), twos: url.searchParams.get("twos") === "1" }); return json(res, jobs.get(LOOKJOB + showId)); }
       if (p === "/api/anime/show" && req.method === "PUT") { const b = JSON.parse(await body(req)); if (!Array.isArray(b.episodes)) return json(res, { error: "That is not a list of episodes." }, 400);
         await writeShow(showId, { ...st.show, about: b.about != null ? String(b.about) : st.show.about, episodes: b.episodes }); return json(res, { show: await readShow(showId, st.scenes) }); }
       if (p === "/api/anime/showidea" && req.method === "POST") { const j = jobs.get(LOOKJOB + showId); if (j && j.status === "running") return json(res, j);
@@ -968,6 +970,7 @@ export async function anime(req, res, url) {
       return json(res, jobs.get(id));
     }
     if (p === "/api/anime/media") return media(req, res, id, String(url.searchParams.get("f") || ""));
+    if (p === "/api/anime/hear") return hear(req, res, url, sceneDir(id)); // "Write down what is said": a Whisper on this computer, free and local (anime/hear.mjs)
     if (p === "/api/anime/peaks") { // the loudness outline of a sound file, 50 values a second (0 to 255), worked out once and kept beside it
       const f = String(url.searchParams.get("f") || ""); if (!/^audio\/[\w][\w.-]*$/.test(f)) return json(res, { error: "not found" }, 404);
       const src = join(sceneDir(id), f), keep = join(sceneDir(id), "audio", ".peaks", f.slice(6) + ".json"); if (!existsSync(src)) return json(res, { error: "not found" }, 404);
@@ -976,7 +979,7 @@ export async function anime(req, res, url) {
         const per = 160, n = Math.floor(pcm.length / 2 / per), v = new Array(n); for (let i = 0; i < n; i++) { let m = 0; for (let k = 0; k < per; k++) { const x = Math.abs(pcm.readInt16LE((i * per + k) * 2)); if (x > m) m = x; } v[i] = Math.min(255, Math.round((m / 32768) * 255)); }
         pk = { rate: 50, v }; await mkdir(dirname(keep), { recursive: true }); await writeFile(keep, JSON.stringify(pk)); }
       res.setHeader("cache-control", "max-age=86400"); return json(res, pk); }
-    if (p === "/api/anime/export" && req.method === "POST") { if (jobs.get(id) && jobs.get(id).status === "running") return json(res, jobs.get(id)); runExport(id, { subtitles: url.searchParams.get("subs") !== "0" }); return json(res, jobs.get(id)); }
+    if (p === "/api/anime/export" && req.method === "POST") { if (jobs.get(id) && jobs.get(id).status === "running") return json(res, jobs.get(id)); runExport(id, { subtitles: url.searchParams.get("subs") !== "0", shape: shapeOf(url.searchParams.get("shape")), twos: url.searchParams.get("twos") === "1" }); return json(res, jobs.get(id)); }
     if (p === "/api/anime/previs" && req.method === "POST") {
       if (jobs.get(id) && jobs.get(id).status === "running") return json(res, jobs.get(id));
       const { note } = JSON.parse((await body(req)) || "{}");

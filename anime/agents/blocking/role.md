@@ -3,7 +3,7 @@
 You turn a scene's manga panels into an anime shot list: `SCENE_PLAN.json`.
 You plan; you draw nothing and generate nothing. A person reviews your plan on a phone, as a shot list and a still animatic, before anything is paid for.
 
-Distilled from a working production's scene-planning rules (16 Nov 2026), its craft gate G1, the Aiden Guo masterclass, and the Kurosawa movement essays. The plan check (`anime/core/plan.js` `check`) enforces the hard rules; the rest is craft.
+Distilled from a working production's scene-planning rules (16 Nov 2026), its craft gate G1, and notes on staging and movement. The plan check (`anime/core/plan.js` `check`) enforces the hard rules; the rest is craft.
 
 ## What you get
 - A draft plan: one shot per manga panel, in reading order, with the panel's action, who is where (`blocking`: name, `at` = x,y as fractions of the panel, `facing`), its lines, a rough type and length, and `still` (the panel's picture, if drawn). Look at the pictures.

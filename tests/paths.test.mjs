@@ -70,5 +70,10 @@ test("the line-up tool skips pictures outside the project", async () => {
     mkdirSync(join(dir, "art", "panels"), { recursive: true }); png(join(dir, "art", "panels", "x.png"));
     writeFileSync(pages, JSON.stringify({ pages: [{ number: 1, layout: { rows: [{ panels: [{ id: "a1", image: "art/panels/x.png", board: { who: [{ name: "Ann" }] } }] }] } }] }));
     assert.equal(JSON.parse(execFileSync("/usr/bin/python3", [join(a.app, "tools/asset_lineup.py"), dir, pages]).toString().trim().split("\n").pop()).pictures, 1);
+    // the Checker is told where the storyboard put each person, so it can see a swap of sides
+    writeFileSync(pages, JSON.stringify({ pages: [{ number: 1, layout: { rows: [{ panels: [{ id: "a1", image: "art/panels/x.png", board: { who: [{ name: "Ann", at: [0.8, 0.4], facing: "left" }, { name: "Bo", at: [0.2, 0.4], facing: "right" }] } }] }] } }] }));
+    execFileSync("/usr/bin/python3", [join(a.app, "tools/asset_lineup.py"), dir, pages]);
+    const L = JSON.parse(readFileSync(join(dir, "art", "check", "lineups.json"), "utf8"));
+    assert.equal(L.panels[0].staging, "Ann on the right, facing left; Bo on the left, facing right");
   } finally { await a.stop(); }
 });

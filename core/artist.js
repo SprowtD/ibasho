@@ -55,6 +55,9 @@
     for (const w of b.who || []) s += `${w.name.toUpperCase()} at the ${posWord(w.at[0], w.at[1])} of the panel, ${SIZE[w.size] || SIZE.medium}, ${FACING[w.facing] || "facing the viewer"}. `;
     s += b.action || "";
     if (b.splash) s += " THIS IS THE SPLASH PANEL, the big moment of the page: design it as one bold image. The main figure is large and pushes toward the viewer from a strong angle, with a clear silhouette; weight comes from big simple shapes of dark against open light, not from more detail; everything else in the picture is kept simple so the eye goes straight to the figure.";
+    if (c.bbox && c.bbox[2] - c.bbox[0] > W * 0.88 && c.bbox[3] - c.bbox[1] > H * 0.88) s += c.panel.type === "bleed"
+      ? " THIS PICTURE IS THE WHOLE PAGE, printed to the page's edges with no border: an upright page-shaped picture (2 wide by 3 tall). Faces, hands and anything that must be read stay a clear margin in from every edge, because the outer edge may be trimmed; the picture itself still runs right to the edges."
+      : " THIS PANEL IS THE WHOLE PAGE: an upright page-shaped picture (2 wide by 3 tall), composed as one image for the full page.";
     if (!(b.who || []).length && !/wide|establish|diagram/.test(shot)) s += named && named.length
       ? ` EXTREME CLOSE-UP of only what is described, filling the frame. NO FACE: no head, no neck, no shoulders and no chest anywhere in the picture; ${named.join(" and ")} is cropped off at the forearms.`
       : " NO PEOPLE in this panel: no faces and no figures, only what is described; a hand may enter the frame if the action needs it.";
@@ -62,8 +65,11 @@
       s += " " + DENSITY[b.job].replace("{PAPER}", colour ? "against a soft, out-of-focus wash of the scene's own colours (colour pages are never left plain white)" : "on empty paper");
       if ((b.who || []).length) s += " " + (b.face === "big" || (b.lines || []).some((l) => l.kind === "shout") ? BIGFACE : CALM);
     }
+    { const D = typeof module !== "undefined" && module.exports ? require("./director.js") : g.Director; // the camera follows the feeling
+      if (b.tension && D && D.TENSION && D.TENSION[b.tension]) s += " " + D.TENSION[b.tension].camera; }
     if (b.art) s += " " + b.art;
     const ia = c.panel.inart || {}; // lettering that belongs to the drawing itself, asked for by the person on this panel
+    if (b.sfx && !ia.sfx) s += `\nA sound effect ("${b.sfx}") is lettered over this picture afterwards, in huge letters. Draw NO sound-effect letters yourself, and keep one area of the picture simple (open air, floor, a plain wall) so the letters have somewhere to sit.`;
     if (ia.sfx) s += `\nSOUND EFFECT, the one exception to the no-text rule: hand-draw the sound effect "${ia.sfx}" into the picture as part of the art, in bold manga sound-effect lettering, beside the thing that makes the sound. No other writing.`;
     if (ia.writing) s += `\nWRITING IN THE PICTURE, an exception to the no-text rule: this writing is hand-drawn as part of the art, on the sign, note or screen the panel shows, spelled exactly, letter by letter: "${ia.writing}". No other writing.`;
     const mine = placed.filter((t) => t.panel === c.panel.id);

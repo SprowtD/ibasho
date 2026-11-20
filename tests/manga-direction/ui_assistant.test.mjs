@@ -89,6 +89,37 @@ try {
   ok(await pagesNow() === 5, "Undo takes the last step back (the join): 5 pages again");
   const saved = await page.evaluate(async (id) => { await new Promise((r) => setTimeout(r, 2500)); const j = await (await fetch("/api/spec?p=" + id)).json(); return j.pages ? j.pages.length : -1; }, ID);
   ok(saved === 5, "the change is saved like any other edit (" + saved + " pages saved)");
+
+  // 4. a lettered chapter: a page step keeps the balloons where the person had them, wherever they still sit cleanly
+  const getSpec = async () => page.evaluate(async (id) => { await new Promise((r) => setTimeout(r, 2500)); return (await fetch("/api/spec?p=" + id)).json(); }, ID);
+  const places = (sp) => page.evaluate((sp) => { const R = window.PageRender, out = {}; // each balloon's place inside its own panel
+    for (const p of sp.pages) { if (!p.layout) continue; const G = new Map(R.allPanels(p.layout).map((c) => [c.panel.id, c.bbox]));
+      for (const it of p.text || []) { const b = G.get(it.panel); if (!b) continue; (out[it.panel] = out[it.panel] || []).push({ hand: !!it.hand, text: it.text, rel: [(it.at[0] * R.W - b[0]) / (b[2] - b[0]), (it.at[1] * R.H - b[1]) / (b[3] - b[1])] }); } }
+    return out; }, sp);
+  await page.evaluate(() => document.getElementById("letterAllBtn").click()); // the button is on the Chapter screen
+  let sp = await getSpec(); const lettered = sp.pages.reduce((n, q) => n + (q.text || []).length, 0);
+  ok(lettered > 4, `the chapter is lettered (${lettered} balloons)`);
+  for (const q of sp.pages) for (const it of q.text || []) it.hand = true; // every balloon is now "the person's": a balloon the Letterer makes afresh has no such mark
+  const put = await page.evaluate(async ([id, body]) => (await fetch("/api/spec?p=" + id, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status, [ID, sp]);
+  ok(put === 200, "the marked chapter is saved (" + put + ")");
+  const was4 = await places(sp);
+  await page.reload(); await page.waitForSelector("#projSel option", { state: "attached" });
+  await page.evaluate((id) => { document.getElementById("projSel").value = id; document.getElementById("projSel").dispatchEvent(new Event("change", { bubbles: true })); }, ID);
+  await page.waitForFunction(() => document.getElementById("sbProj").textContent.includes("5 pages"));
+  await page.click(".as-btn");
+  answer = () => ({ reply: "Joining.", actions: [{ name: "join_pages", args: { page: 1 }, why: "" }] });
+  await say("Join page 1 and 2");
+  await btn("Join page 1").click();
+  await page.waitForFunction(() => document.getElementById("sbProj").textContent.includes("4 pages"));
+  const said = await btn("Join page 1").textContent(), m4 = /balloons kept (where you placed them|as placed in (\d+) panels?, (\d+) lettered again)/.exec(said);
+  ok(!!m4, "the step says the balloons were kept: " + said);
+  sp = await getSpec(); const now4 = await places(sp), onPage = new Set(Object.keys(now4).filter((id) => sp.pages[sp.pages.findIndex((q) => !q.cover)].text.some((it) => it.panel === id)));
+  const keptIds = [...onPage].filter((id) => now4[id].every((x) => x.hand)), freshIds = [...onPage].filter((id) => now4[id].every((x) => !x.hand));
+  ok(keptIds.length + freshIds.length === onPage.size, "a panel's balloons are all kept or all placed afresh, never mixed");
+  ok(keptIds.length >= 1 && (!m4 || !m4[2] || +m4[2] === keptIds.length), `balloons were kept in ${keptIds.length} of ${onPage.size} lettered panels, as the step said`);
+  ok(keptIds.every((id) => now4[id].length === was4[id].length && now4[id].every((x, k) => x.text === was4[id][k].text && Math.abs(x.rel[0] - was4[id][k].rel[0]) < 0.01 && Math.abs(x.rel[1] - was4[id][k].rel[1]) < 0.01)), "a kept balloon has its words and the same place inside its panel");
+  const lines4 = Object.values(was4).flat().length, after4 = Object.values(now4).flat().length;
+  ok(after4 >= lines4 - 1 && after4 <= lines4 + 3, `no line was lost or doubled (${lines4} balloons before, ${after4} after)`);
   ok(errors.length === 0, "no script errors: " + errors.join(" | "));
 } finally {
   if (browser) await browser.close();

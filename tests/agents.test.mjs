@@ -33,7 +33,9 @@ test("a manga character sheet: the description goes in a data file", async () =>
     await until(() => codexCalls(a).length);
     const bank = join(dir, "bank"), task = readdirSync(bank).find((n) => n.startsWith("SHEET_TASK") && n.endsWith(".md"));
     const text = readFileSync(join(bank, task), "utf8"); assert.doesNotMatch(text, /IGNORE|ANN: tall/);
-    assert.match(readFileSync(join(bank, task.replace(/\.md$/, ".prompt.txt")), "utf8"), /ANN: tall/);
+    const prompt = readFileSync(join(bank, task.replace(/\.md$/, ".prompt.txt")), "utf8");
+    assert.match(prompt, /ANN: tall/);
+    assert.match(prompt, /four expressions: angry, crying, laughing, surprised/); assert.match(prompt, /real folds, seams and creases/, "a sheet shows expressions and drawn clothing folds");
   } finally { await a.stop(); }
 });
 
@@ -46,6 +48,7 @@ test("the anime asset check is read-only, with the look's words in a data file",
     await fetch(`${a.base}/api/anime/check?id=s1`, { method: "POST" });
     await until(() => existsSync(join(dir, "check", "check.json")));
     const c = codexCalls(a)[0]; assert.equal(sandboxOf(c), "read-only"); assert.ok(c.argv.includes("-o"));
+    assert.ok(c.argv.includes("features.multi_agent=false"), "Codex is run as one agent: its multi-agent mode waits on helpers past the time a job is given");
     const task = readFileSync(join(dir, "check", "CHECK_TASK.md"), "utf8"); assert.doesNotMatch(task, /IGNORE|red coat/);
     assert.match(readFileSync(join(dir, "check", "CHECK_DATA.json"), "utf8"), /red coat/);
   } finally { await a.stop(); }

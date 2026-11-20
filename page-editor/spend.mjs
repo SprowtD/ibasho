@@ -33,7 +33,9 @@ const held = []; // estimates of jobs that have been let through and are not in 
 const waiting = () => { const now = Date.now(); while (held.length && now - held[0].at > 30 * 60000) held.shift(); return held.reduce((a, h) => a + h.est, 0); };
 /** Stop a paid job before it starts (returns a function that gives the held amount back, for a job that then fails unpaid): over the person's "ask me first" amount with no yes from them, or past the monthly cap.
  * est = this job's estimate (null when the model lists no price); ok = okFrom(req), kept with the job. */
-export async function guardSpend(saved, est, label = "This", ok) {
+let gate = Promise.resolve(); // one check at a time: two jobs asked for in the same moment used to both read the month's total before either was held, and both pass a cap only one fitted under
+export function guardSpend(saved, est, label = "This", ok) { const r = gate.then(() => guardOne(saved, est, label, ok)); gate = r.catch(() => {}); return r; }
+async function guardOne(saved, est, label, ok) {
   const s = await spendSettings(saved), ask = +s.askOver || 0;
   if (est != null && est > ask && !(ok && ok.asked && ok.usd >= est * 0.8))
     throw new Error(`${label} was not started: it costs about $${(+est).toFixed(2)}, which is over your "ask me first" amount ($${ask.toFixed(2)}), and nobody said yes to it. Start it from the screen, which asks first.`);

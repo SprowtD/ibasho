@@ -8,13 +8,14 @@ import { choiceFor } from "./models.mjs";
 const HIST = (saved) => join(saved, "work.json"), TIMES = (saved) => join(saved, "work-times.json");
 const readJson = async (f, d) => { try { return JSON.parse(await readFile(f, "utf8")); } catch { return d; } };
 // Usual seconds before this computer has its own figures.
-const DEFAULT = { picture: { codex: 180, openrouter: 45 }, video: { openrouter: 150 }, storyboard: { codex: 420, openrouter: 90 }, check: { codex: 600 }, sheet: { codex: 150, openrouter: 45 }, look: { codex: 60 }, tone: { codex: 45 } };
+const DEFAULT = { picture: { codex: 180, openrouter: 45 }, video: { openrouter: 150 }, storyboard: { codex: 420, openrouter: 90 }, check: { codex: 600 }, sheet: { codex: 150, openrouter: 45 }, look: { codex: 60 }, tone: { codex: 45 }, writing: { codex: 150, openrouter: 40 } };
 
 /** What kind of work a queue job is: picture | video | storyboard | check | sheet | look. */
 export function typeOf(j) {
   if (j.kind === "create") return j.what === "video" ? "video" : "picture";
   if (j.kind === "anime") return j.what === "video" ? "video" : j.what === "sheet" ? "sheet" : j.what === "check" ? "check" : "picture";
   if (j.kind === "paneler") return "storyboard";
+  if (j.kind === "writer") return "writing";
   if (j.kind === "check") return "check";
   if (j.kind === "sheet") return "sheet";
   if (j.kind === "look") return "look";
@@ -27,6 +28,7 @@ export function describe(j) {
   let label, link;
   if (j.kind === "create") { label = `Create · ${t === "video" ? "a video" : "a picture"}`; link = "/create"; }
   else if (j.kind === "anime") { const sc = j.scene || ""; label = `${sc} · ${t === "video" ? "video of shot " + j.shot : t === "sheet" ? "sheet: " + j.name : t === "check" ? "asset check" : "still for shot " + j.shot}`; link = sc.startsWith("look~") ? "/anime/#/" : `/anime/#/scene/${encodeURIComponent(sc)}`; }
+  else if (j.kind === "writer") { label = j.step === "plan" ? "The Writer · talking an idea through" : "The Writer · a chapter from an idea"; link = "/#home"; }
   else if (j.kind === "paneler") { label = `${j.project} · storyboard`; link = "/#home"; }
   else if (j.kind === "check") { label = `${j.project} · asset check`; link = "/"; }
   else if (j.kind === "sheet") { label = `${j.project} · sheet: ${j.name}`; link = "/"; }
@@ -40,7 +42,7 @@ const keyOf = (type, model) => `${type}:${model || "codex"}`;
 /** Seconds this job usually takes: this computer's own average for the kind and model, else a default. */
 export async function expectFor(saved, j) {
   const type = typeOf(j); let model = j.model || (j.pick && j.pick.model) || "";
-  if (!model) { try { const c = await choiceFor(saved, type === "storyboard" ? "text" : type === "video" ? "video" : "picture"); model = c ? c.model : "codex"; } catch { model = "codex"; } }
+  if (!model) { try { const c = await choiceFor(saved, type === "storyboard" || type === "writing" ? "text" : type === "video" ? "video" : "picture"); model = c ? c.model : "codex"; } catch { model = "codex"; } }
   const t = (await readJson(TIMES(saved), {}))[keyOf(type, model)];
   if (Array.isArray(t) && t.length) return Math.round(t.reduce((a, b) => a + b, 0) / t.length);
   const d = DEFAULT[type] || { codex: 180 }; return model === "codex" ? d.codex || 180 : d.openrouter || 90;

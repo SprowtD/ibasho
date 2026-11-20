@@ -60,8 +60,13 @@ for i, p in enumerate(pages):
         if not q.get("image") and fallback.get(q.get("id")): q["image"] = fallback[q["id"]]
         if not q.get("image") or not inside(proj, q["image"]) or not inside(proj, q["image"]).exists(): continue
         b = q.get("board") or {}
+        def side(w):  # where the storyboard puts a person's head: at[0] is 0 at the panel's left edge, 1 at its right (either reading direction)
+            try: x = float((w.get("at") or [0.5])[0])
+            except (TypeError, ValueError): x = 0.5
+            return "left" if x < 0.4 else "right" if x > 0.6 else "middle"
+        staging = "; ".join(f'{w.get("name", "")} on the {side(w)}' + (f', facing {w["facing"]}' if w.get("facing") in ("left", "right", "camera", "away") else "") for w in b.get("who") or [] if w.get("name"))
         panels.append({"panel": q.get("id", ""), "page": p.get("number", i + 1), "image": q["image"], "who": [w.get("name", "") for w in b.get("who") or []],
-                       "text": " ".join(str(b.get(k) or "") for k in ("action", "note", "place"))})
+                       "text": " ".join(str(b.get(k) or "") for k in ("action", "note", "place")), "staging": staging})
 
 def font(size):
     for f in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"):
@@ -135,6 +140,6 @@ for field, kind in (("places", "place"), ("props", "prop")):
         tiles = [(p, fit(pic(p["image"]), TH), False) for p in panels if rx.search(p["text"])]
         add_group(name, kind, c, tiles)
 
-res = {"checked": {p["panel"]: p["image"] for p in panels}, "panels": [{k: p[k] for k in ("panel", "page", "image", "who")} | {"action": p["text"][:400]} for p in panels], "groups": groups}
+res = {"checked": {p["panel"]: p["image"] for p in panels}, "panels": [{k: p[k] for k in ("panel", "page", "image", "who")} | {"action": p["text"][:400], "staging": p["staging"]} for p in panels], "groups": groups}
 (out / "lineups.json").write_text(json.dumps(res, indent=1))
 print(json.dumps({"groups": len(groups), "tiles": sum(len(g["tiles"]) for g in groups), "pictures": len(panels)}))

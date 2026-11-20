@@ -137,7 +137,7 @@
       else if (d.epup != null) swap(eps(), +d.epup, +d.epup - 1);
       else if (d.epdown != null) swap(eps(), +d.epdown, +d.epdown + 1);
       else if (d.epdel != null) { const ep = eps()[+d.epdel]; if (ep.scenes.length && !confirm(`Remove “${ep.title}”? Its ${ep.scenes.length} scene${ep.scenes.length === 1 ? " stays" : "s stay"} in the show, in no episode.`)) return; eps().splice(+d.epdel, 1); }
-      else if (d.epvideo != null) { b.disabled = true; return (async () => { await saveEps(true); try { await send(`/api/anime/episode?show=${E(W.id)}&ep=${E(eps()[+d.epvideo].id)}&subs=${localStorage.getItem("ibasho.exportSubs") === "0" ? 0 : 1}`, "POST"); } catch (err) { alert(err.message); } showPage(W.id); })(); }
+      else if (d.epvideo != null) { b.disabled = true; return (async () => { await saveEps(true); try { await send(`/api/anime/episode?show=${E(W.id)}&ep=${E(eps()[+d.epvideo].id)}&subs=${localStorage.getItem("ibasho.exportSubs") === "0" ? 0 : 1}&shape=${E(expShape())}&twos=${localStorage.getItem("ibasho.exportTwos") === "1" ? 1 : 0}`, "POST"); } catch (err) { alert(err.message); } showPage(W.id); })(); }
       else if (d.ideadel != null) { const [ei, k] = d.ideadel.split(":").map(Number); eps()[ei].ideas.splice(k, 1); }
       else if (d.write != null) { const [ei, k] = d.write.split(":").map(Number), x = eps()[ei].ideas[k]; b.disabled = true;
         return (async () => { await saveEps(true); try { const r = await send("/api/anime/scenes", "POST", { title: x.title, idea: x.idea, show: W.id, episode: eps()[ei].id, planned: k }); location.hash = "#/scene/" + E(r.id); } catch (err) { alert(err.message); b.disabled = false; } })(); }
@@ -264,27 +264,78 @@
   // ---------- a scene: summary, scene cards, shot list ----------
   let S = null; // { id, scene, plan, check, job, open:Set, saveT }
   // ---------- the Assistant on the anime screens (studio.js): what is open, and the actions it may propose ----------
-  const shotIdx = (id) => { const i = S && S.plan ? S.plan.shots.findIndex((x) => x.shot_id === id) : -1; if (i < 0) throw new Error("There is no shot " + id + " in this scene."); return i; };
-  function openShot(id) { const i = shotIdx(id); if (docked()) return select(i); S.open.add(id); redrawShot(i); const c = document.querySelector(`.shot[data-i="${i}"]`); if (c) c.scrollIntoView({ block: "center" }); }
+  const AS = window.AnimeSteps;
+  const shotIdx = (id) => AS.idx(S && S.plan, id);
+  function openShot(id) { const i = shotIdx(id); if (docked()) return select(i); S.open.add(S.plan.shots[i].shot_id); redrawShot(i); const c = document.querySelector(`.shot[data-i="${i}"]`); if (c) c.scrollIntoView({ block: "center" }); }
   const vidCost = (id) => { const m = MODELS.video; if (!m || !S) return 0; const s = S.plan.shots[shotIdx(id)]; return m.perSecond != null ? m.perSecond * vidLen(m, +s.duration || 3) : 0; };
-  if (window.Ibasho && window.Ibasho.registerAssistant) window.Ibasho.registerAssistant({
-    where: () => !S || !S.plan ? { screen: "anime", note: "No scene is open (the list of scenes or a show's page)." } : { screen: "anime", scene: S.id, title: S.scene.title || S.plan.title, open: { shot: S.sel || null },
+  // ----- shot-level steps for the Assistant (20 Nov 2026): each changes only the shots named, at once, and Undo takes it back -----
+  let asUndo = []; // { scene, plan (as text), what }: the plan as it was before each step, newest last
+  function drawAsUndo() { const b = $("#asUndo"); if (!b) return; const mine = asUndo.filter((u) => S && u.scene === S.id), last = mine[mine.length - 1]; b.hidden = !last; b.disabled = busy(); if (last) b.title = "Takes back: " + last.what; }
+  function asNeed() { if (!S || !S.plan) throw new Error("No scene is open."); if (busy()) throw new Error(`The ${JOB[S.job.kind] || "Blocking pass"} is rewriting this scene's plan: editing waits until it finishes.`); }
+  /** Run one step from anime/core/steps.js on the open scene: the plan as it was is kept for Undo, the shot it changed is shown,
+   *  and the sentence it returns is what really happened (the Assistant's button and the model are given exactly that). */
+  function asStep(fn, label) {
+    return (a) => { asNeed(); const was = JSON.stringify(S.plan), r = fn(S.plan, a || {});
+      if (r.same) return r.msg;
+      asUndo.push({ scene: S.id, plan: was, what: label(a || {}) }); if (asUndo.length > 30) asUndo.shift();
+      if (S.vsent) S.vsent = {}; // the video words shown are out of date
+      S.sel = r.shot; if (!docked()) S.open.add(r.shot);
+      changed(true); drawAsUndo();
+      const c = document.querySelector(`#shots .shot[data-i="${S.plan.shots.findIndex((x) => x.shot_id === r.shot)}"]`); if (c && !docked()) c.scrollIntoView({ block: "center" });
+      return r.msg + " Undo takes it back."; };
+  }
+  function asUndoLast() {
+    asNeed(); let k = -1; for (let i = asUndo.length - 1; i >= 0; i--) if (asUndo[i].scene === S.id) { k = i; break; }
+    if (k < 0) throw new Error("There is no step of the Assistant's to take back in this scene.");
+    const u = asUndo.splice(k, 1)[0], now = S.plan, old = JSON.parse(u.plan);
+    for (const s of old.shots) { const n = now.shots.find((x) => x.shot_id === s.shot_id); if (!n) continue; for (const f of ["still", "clip", "clip_dur", "clip_from", "clip_sound", "clip_poster", "clip_takes"]) if (n[f] !== undefined && s[f] === undefined) s[f] = n[f]; } // a picture or clip that landed since stays
+    S.plan = old; if (S.vsent) S.vsent = {}; changed(true); drawAsUndo();
+    return `Taken back: ${u.what}. The scene has ${S.plan.shots.length} shot${S.plan.shots.length === 1 ? "" : "s"} again.`;
+  }
+  /** What the Assistant is shown: every shot with its lines (and their ids), cut shorter only when a very long scene would pass the size limit. */
+  function assistantWhere() {
+    if (!S || !S.plan) return { screen: "anime", note: "No scene is open (the list of scenes or a show's page)." };
+    const build = (cut) => ({ screen: "anime", scene: S.id, title: S.scene.title || S.plan.title, open: { shot: S.sel || null }, total_seconds: Math.round(S.plan.shots.reduce((n, s) => n + (+s.duration || 0), 0) * 10) / 10,
       models: { stills: MODELS.picture ? MODELS.picture.name + (MODELS.picture.quality ? " (" + MODELS.picture.quality + ")" : "") : "Codex", video: MODELS.video ? MODELS.video.name : "none picked" },
       voices: S.look ? Object.keys(S.look.cast || {}).filter((n) => S.look.cast[n].voice) : [],
-      shots: S.plan.shots.map((s) => ({ id: s.shot_id, seconds: +s.duration || 0, framing: (s.camera && s.camera.framing) || "", move: (s.camera && s.camera.move) || "", action: String(s.action || "").slice(0, 220), has_picture: !!s.still, drawn_in_look: isAnime(s), has_video: !!s.clip,
-        lines: (s.lines || []).map((id) => { const l = lineOf(id); return l ? `${l.speaker || "caption"}: ${l.text}` : ""; }).filter(Boolean) })) },
-    actions: {
-      open_shot: { desc: "Show one shot (its picture, video and settings)", args: { shot: "shot id" }, auto: true, label: (a) => `Open shot ${a.shot}`, run: (a) => { openShot(a.shot); } },
-      draw_shot: { desc: "Draw or redraw a shot's still in the show's look with the stills model. note = the person's direction for the picture.", args: { shot: "shot id", note: "optional direction" }, paid: true, cost: () => stillCost(1),
+      plan_check: { errors: S.check.errors.length, warnings: S.check.warnings.length }, busy: busy() ? "a pass is rewriting the plan: nothing can be edited until it finishes" : undefined,
+      note: "Shots are listed in playing order. A line is written as its id, then who says it.",
+      shots: S.plan.shots.map((s) => ({ id: s.shot_id, seconds: +s.duration || 0, type: s.scene_type || undefined, framing: (s.camera && s.camera.framing) || "", move: (s.camera && s.camera.move) || "", action: String(s.action || "").slice(0, cut), has_picture: !!s.still, drawn_in_look: isAnime(s), has_video: !!s.clip,
+        joins_before: s.join ? (s.join === "wipe" ? "hidden wipe" : "match move") + (s.join_cover ? ": " + s.join_cover : "") : undefined, long_take: s.long_take ? true : undefined, beats: String(s.beats || "").split("\n").filter((x) => x.trim()).length || undefined,
+        lines: (s.lines || []).map((id) => { const l = lineOf(id); return l ? `${id} ${l.speaker || "caption"}: ${String(l.text || "").slice(0, cut)}` : ""; }).filter(Boolean) })) });
+    for (const cut of [1200, 600, 300, 160]) { const w = build(cut); if (JSON.stringify(w).length < 56000 || cut === 160) return w; }
+  }
+  if (window.Ibasho && window.Ibasho.registerAssistant) { const hasShot = (a) => { if (!S || !S.plan) return "No scene is open."; return AS.has(S.plan, a.shot); }, given = (a, ks) => ks.filter((k) => a[k] != null && String(a[k]).trim()).join(", ") || "nothing given";
+    window.Ibasho.registerAssistant({ where: assistantWhere, actions: {
+      open_shot: { desc: "Show one shot (its picture, video and settings)", args: { shot: "shot id" }, auto: true, check: hasShot, label: (a) => `Open shot ${a.shot}`, run: (a) => { openShot(a.shot); } },
+      edit_shot: { desc: "Change ONE shot's plan: what happens (action), the framing (for example close-up, wide), the camera move and the reason for it, the shot type, or its length in seconds. Give only what changes. The spoken lines are the script's own words and cannot be changed here. Free, at once; a drawn picture or made video stays until it is made again.",
+        args: { shot: "shot id", action: "optional: what happens", framing: "optional", move: "optional camera move", move_reason: "optional: why the camera moves", type: "optional: " + Object.keys(P.TARGETS).join(" | "), seconds: "optional number" }, check: hasShot,
+        label: (a) => `Change shot ${a.shot}: ${given(a, ["action", "framing", "move", "move_reason", "type", "seconds"])}`, run: asStep((p, a) => AS.edit(p, a, Object.keys(P.TARGETS)), (a) => `the change to shot ${a.shot}`) },
+      split_shot: { desc: "Make ONE shot into two, one after the other. Free, at once, only that shot changes. The time is shared half and half, or seconds = the first part's length. Its lines stay on the first part, or line = the id of the first line that goes to the second part (it and the lines after it). The second part starts as a copy: follow with edit_shot to say what it shows.",
+        args: { shot: "shot id", line: "optional line id: it and the lines after it go to the second part", seconds: "optional: the first part's length" }, check: hasShot, label: (a) => `Split shot ${a.shot} in two`, run: asStep(AS.split, (a) => `the split of shot ${a.shot}`) },
+      join_shots: { desc: "Make a shot and the shot AFTER it into one shot: the lengths add up, the lines follow each other, the first shot's picture is kept. Free, at once. Not for shots that have a video clip.", args: { shot: "the first of the two shots" }, check: hasShot,
+        label: (a) => `Join shot ${a.shot} with the shot after it`, run: asStep(AS.join, (a) => `the join of shot ${a.shot} with the shot after it`) },
+      move_shot: { desc: "Move one shot one place earlier or later (it changes places with its neighbour). Free, at once. Two shots that both carry lines cannot change places: the script stays in order.", args: { shot: "shot id", to: "earlier | later" }, check: hasShot,
+        label: (a) => `Move shot ${a.shot} one place ${/^(earlier|before|up|prev)/i.test(String(a.to)) ? "earlier" : "later"}`, run: asStep(AS.move, (a) => `the move of shot ${a.shot}`) },
+      set_join: { desc: "Set how a shot's video joins the shot BEFORE it: cut (plain), wipe (a hidden wipe: something fills the frame at the end of one shot and the start of the next; cover = what fills it) or match (a match move: cover = the movement both shots share). reason = why the cut is hidden or the move carried on. Free, at once; it changes the words sent to the video model for both shots.",
+        args: { shot: "shot id (not the first shot)", how: "cut | wipe | match", cover: "for wipe or match", reason: "optional" }, check: hasShot, label: (a) => `Shot ${a.shot}: join the shot before with ${AS.JOIN_NAME[{ cut: "", wipe: "wipe", match: "match" }[String(a.how || "").toLowerCase()] || ""] || String(a.how)}`, run: asStep(AS.setJoin, (a) => `the join set on shot ${a.shot}`) },
+      long_take: { desc: "Turn the Long take tick on or off for one shot. A long take is for talk: one 10 to 15 s video clip with 3 to 5 beats instead of many short clips. Free, at once.", args: { shot: "shot id", on: "yes | no" }, check: hasShot,
+        label: (a) => `Shot ${a.shot}: long take ${/^(no|off|false|0)$/i.test(String(a.on).trim()) ? "off" : "on"}`, run: asStep(AS.longTake, (a) => `the Long take tick on shot ${a.shot}`) },
+      undo_step: { desc: "Take back the last step of yours that changed this scene's shots (edit, split, join, move, join setting, long take).", args: {}, check: () => (S && asUndo.some((u) => u.scene === S.id) ? "" : "There is no step to take back in this scene."), label: () => "Take back the last step", run: asUndoLast },
+      draw_shot: { desc: "Draw or redraw a shot's still in the show's look with the stills model. note = the person's direction for the picture.", args: { shot: "shot id", note: "optional direction" }, paid: true, cost: () => stillCost(1), check: hasShot,
         label: (a) => `Draw shot ${a.shot}${a.note ? ": " + String(a.note).slice(0, 60) : ""}`,
-        run: async (a) => { const s = S.plan.shots[shotIdx(a.shot)]; if (a.note) s.draw_note = String(a.note); await flush(); await ask(a.shot, true); return "Queued: the new still lands on the shot when it is drawn."; } },
-      make_video: { desc: "Turn a shot's picture into a video clip with the video model (the shot must have a picture). note = the person's direction for the motion.", args: { shot: "shot id", note: "optional direction for the motion" }, paid: true, cost: (a) => { try { return vidCost(a.shot); } catch (e) { return 0; } },
+        run: async (a) => { const s = S.plan.shots[shotIdx(a.shot)]; if (a.note) s.draw_note = String(a.note); await flush(); await ask(s.shot_id, true); return "Queued: the new still lands on the shot when it is drawn."; } },
+      make_video: { desc: "Turn a shot's picture into a video clip with the video model (the shot must have a picture). note = the person's direction for the motion.", args: { shot: "shot id", note: "optional direction for the motion" }, paid: true, cost: (a) => { try { return vidCost(a.shot); } catch (e) { return 0; } }, check: hasShot,
         label: (a) => `Make a video of shot ${a.shot}${a.note ? ": " + String(a.note).slice(0, 60) : ""}`,
         run: async (a) => { const s = S.plan.shots[shotIdx(a.shot)]; if (!s.still) throw new Error("Shot " + a.shot + " has no picture yet: draw it first."); if (!MODELS.video) throw new Error("Pick a video model first (the Video button above the shots)."); if (a.note) s.video_note = String(a.note); await askVideo(s, true); return "Started: the clip lands on the shot in a few minutes."; } },
-      change_shot: { desc: "Change a shot's words: what happens (action), the framing, the camera move, or its length in seconds. Free.", args: { shot: "shot id", action: "optional", framing: "optional", move: "optional", seconds: "optional number" },
-        label: (a) => `Change shot ${a.shot}: ${["action", "framing", "move", "seconds"].filter((k) => a[k] != null && a[k] !== "").join(", ")}`,
-        run: (a) => { const s = S.plan.shots[shotIdx(a.shot)]; s.camera = s.camera || {}; if (a.action) s.action = String(a.action); if (a.framing) s.camera.framing = String(a.framing); if (a.move) s.camera.move = String(a.move); if (+a.seconds > 0) s.duration = Math.round(+a.seconds * 100) / 100; changed(true); } },
-    } });
+      plan_again: { desc: "LAST RESORT: run the Blocking pass again on the WHOLE scene with a note. EVERY shot is planned again, it takes 10 to 20 minutes, and changes made by hand to the shots are replaced (the plan as it is now is kept under Versions). Never use it to change one shot or a few: use edit_shot, split_shot, join_shots, move_shot, set_join or long_take.", args: { note: "what to change" },
+        label: (a) => `Plan the WHOLE scene again${a.note ? ": " + String(a.note).slice(0, 60) : ""}`,
+        run: async (a) => { asNeed(); if (running()) throw new Error(`Not started: the ${JOB[S.job.kind] || "Blocking pass"} is still running on this scene.`);
+          const n = S.plan.shots.length, pics = S.plan.shots.filter((s) => s.still).length, vids = S.plan.shots.filter((s) => s.clip).length;
+          if (!confirm(`Plan the WHOLE scene again?\n\nAll ${n} shots are planned again by the Blocking agent. It takes 10 to 20 minutes, and the shots cannot be edited while it runs.` + (pics || vids ? `\n${pics} picture${pics === 1 ? "" : "s"}${vids ? ` and ${vids} video clip${vids === 1 ? "" : "s"}` : ""} may not land on the same shots.` : "") + "\nThe plan as it is now is kept under Versions.\n\nTo change one shot, cancel and ask for that shot only.")) throw new Error("Not started: you cancelled. Nothing changed.");
+          clearTimeout(S.saveT); await save(); await send("/api/anime/block?id=" + encodeURIComponent(S.id), "POST", { note: String(a.note || "") }); scene(S.id);
+          return "Started. Nothing has changed yet: the new plan loads when the Blocking pass is done, in 10 to 20 minutes."; } },
+    } }); }
   async function scene(id, keepOpen) {
     const d = await api("/api/anime/scene?id=" + encodeURIComponent(id)), keepSel = S && S.id === id ? { sel: S.sel, tab: S.tab } : {}; // a reload keeps the picked shot and tab
     S = { id, scene: d.scene, plan: d.plan, check: d.check, job: d.job, previs: d.previs || {}, sound: d.sound && Array.isArray(d.sound.clips) ? d.sound : { clips: [] }, exports: d.exports || [], look: d.look || { id: "", name: "", text: "", refs: [], cast: {} }, own: d.ownStyle || { on: false, template: "", text: "", refs: [] }, looks: d.looks || [], templates: d.templates || [], people: d.people || [], takes: d.takes || {}, ck: d.assetCheck || null, sent: {}, defaultLook: d.defaultLook || "", draws: d.draws || {}, open: keepOpen || new Set(), saveT: null, sndT: null };
@@ -314,8 +365,11 @@
         <button class="btn primary" id="play" ${plan.shots.length ? "" : "disabled"}>▶︎ Play animatic</button>
         <button class="btn" id="block" ${running() ? "disabled" : ""}>${S.scene.blocked ? "Blocking pass again" : "Blocking pass"}</button>
         <button class="btn" id="versions">Versions</button>
+        <button class="btn" id="asUndo" hidden>Undo the Assistant's step</button>
         <button class="btn" id="exportBtn" ${running() || !plan.shots.length ? "disabled" : ""} title="One video file of this scene: its pictures and video clips, the subtitles and the sound">Export as a video</button>
         <label class="small" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="exportSubs" ${localStorage.getItem("ibasho.exportSubs") === "0" ? "" : "checked"}> with subtitles</label>
+        <label class="small" style="display:inline-flex;align-items:center;gap:5px" title="The shape of the video file. Upright and square cut each picture around the people in the shot."><span>Shape</span><select id="exportShape">${[["16:9", "16:9, as made"], ["9:16", "9:16, upright"], ["1:1", "1:1, square"]].map(([v, t]) => `<option value="${v}"${expShape() === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label class="small" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer" title="Each drawing of a video clip is held for two frames (12 drawings a second), the cadence of hand-drawn anime. Stills and the sound are not changed."><input type="checkbox" id="exportTwos" ${localStorage.getItem("ibasho.exportTwos") === "1" ? "checked" : ""}> On twos (anime cadence)</label>
       </div>
       ${S.exports.length ? `<div class="small exportLine">Latest video: <a href="${esc(img(S.exports[0].url))}" target="_blank" rel="noopener">Open</a> · <a href="${esc(img(S.exports[0].url))}" download="${esc(S.exports[0].name)}">Download</a> <span class="muted">(${(S.exports[0].size / 1e6).toFixed(1)} MB, made ${new Date(S.exports[0].at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})</span></div>` : ""}
       <details class="card grade" id="grade" ${S.gradeOpen ? "open" : ""}><summary>Colour grade <span class="small muted" id="gradeNow"></span></summary><div id="gradeBody"></div></details>
@@ -340,10 +394,13 @@
     wirePrevis(); drawLook(); wireLook(); drawCheck(); wireCheck(); drawSound(); wireSound(); drawAllLabel(); wireModels();
     $("#drawAll").onclick = async () => { const todo = S.plan.shots.filter((s) => !isAnime(s) && !active(s.shot_id)); if (!todo.length || (todo.length > 6 && !confirm(`Draw ${todo.length} shots? About 3 minutes each, one at a time.`))) return; if (window.Ibasho && !(await window.Ibasho.okToSpend(stillCost(todo.length), `Drawing ${todo.length} still${todo.length === 1 ? "" : "s"}`))) return; await flush(); for (const s of todo) await ask(s.shot_id, true); };
     $("#versions").onclick = versions;
+    $("#asUndo").onclick = () => { try { asUndoLast(); } catch (e) { alert(e.message); } }; drawAsUndo();
     drawGrade(); $("#grade").addEventListener("toggle", () => { S.gradeOpen = $("#grade").open; });
     $("#exportBtn").onclick = async () => { $("#exportBtn").disabled = true; clearTimeout(S.saveT); clearTimeout(S.sndT); // the video is made from what is saved
-      try { await save(); await send("/api/anime/sound?id=" + E(S.id), "PUT", S.sound); await send(`/api/anime/export?id=${E(S.id)}&subs=${$("#exportSubs").checked ? 1 : 0}`, "POST"); } catch (e) { alert(e.message); } scene(S.id, S.open); };
+      try { await save(); await send("/api/anime/sound?id=" + E(S.id), "PUT", S.sound); await send(`/api/anime/export?id=${E(S.id)}&subs=${$("#exportSubs").checked ? 1 : 0}&shape=${E($("#exportShape").value)}&twos=${$("#exportTwos").checked ? 1 : 0}`, "POST"); } catch (e) { alert(e.message); } scene(S.id, S.open); };
     $("#exportSubs").onchange = (e) => localStorage.setItem("ibasho.exportSubs", e.target.checked ? "1" : "0");
+    $("#exportShape").onchange = (e) => localStorage.setItem("ibasho.exportShape", e.target.value); // remembered on this device, like the subtitles tick
+    $("#exportTwos").onchange = (e) => localStorage.setItem("ibasho.exportTwos", e.target.checked ? "1" : "0");
     $("#addEnd").onclick = () => addShot(plan.shots.length - 1);
     wireCards(); wireShots($("#shots")); wireShots($("#shotEd"));
     const showTab = () => { for (const x of app.querySelectorAll(".tabp")) x.classList.toggle("on", x.dataset.tabp === (S.tab || "look")); for (const x of app.querySelectorAll(".midTabs [data-tab]")) x.setAttribute("aria-selected", x.dataset.tab === (S.tab || "look")); const c = $("#cards"); if (c && dk) c.open = true; };
@@ -489,6 +546,7 @@
         <label class="btn sm" style="display:inline-flex;align-items:center;cursor:pointer" title="Use a piece of video for this shot (made anywhere)">${s.clip ? "Add another take of the clip" : "Add a video clip"}<input type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm" data-clipup hidden ${ro}></label>
         ${s.clip ? `<button class="btn sm" data-act="clipdel" ${ro}>${clipTakes(s).length > 1 ? "Remove this take" : "Remove the clip"}</button>` : ""}</div>
       ${s.clip ? `<div class="clipbar small"><span class="chip">Video clip · ${fmt(+s.clip_dur || 0)}</span>
+        <button class="btn sm" type="button" data-hear="${esc(s.clip)}" data-hear-shot="${esc(s.shot_id)}" title="The words spoken in this clip, with their times, from a Whisper on this computer (free, nothing is sent anywhere)">Write down what is said</button>
         <label>starts at <input type="number" step="0.1" min="0" data-clipfrom value="${esc(+s.clip_from || 0)}" style="width:70px" ${ro}> s into the clip</label>
         <label>speed <input type="number" step="0.1" min="0.25" max="4" data-clipspeed value="${esc(+s.clip_speed || 1)}" style="width:62px" ${ro}> ×</label>
         ${Math.abs(clipRest(s) - (+s.duration || 0)) > 0.05 ? `<button class="btn sm" data-act="cliplen" ${ro}>Make the shot ${fmt(Math.max(0.3, clipRest(s)))} (the rest of the clip)</button>` : ""}
@@ -546,6 +604,7 @@
     if (fit) s.clip_from = 0; else s.clip_from = Math.max(0, Math.min(+s.clip_from || 0, Math.max(0, (+r.dur || 0) - 0.1)));
     if (r.poster && (!s.still || s.still === posterWas)) s.still = r.poster; else if (!r.poster && s.still === posterWas) s.still = "";
     if (r.dur > 0 && (fit || (+s.duration || 0) > r.dur - s.clip_from)) s.duration = Math.max(0.3, Math.round((r.dur - s.clip_from) * 100) / 100); }
+  const expShape = () => { const v = localStorage.getItem("ibasho.exportShape"); return v === "9:16" || v === "1:1" ? v : "16:9"; }; // the shape last chosen for a video export on this device
   function focusStyle(s) { // centre the crop on the people in the panel
     const pts = (Array.isArray(s.blocking) ? s.blocking : []).map((w) => w && w.at).filter((a) => Array.isArray(a) && a.length === 2);
     if (!pts.length) return "";
@@ -975,6 +1034,7 @@
       <div class="small muted">${mine.length} clip${mine.length === 1 ? "" : "s"} on this layer. ${t.kind === "music" ? "A new music clip starts at 60% so voices stay clear." : ""}</div>
       ${lines.length ? `<div class="field"><span>${esc(t.who)}'s lines (add a recording to a line and it lands where the line is spoken)</span>
         <div class="vlines">${lines.map((x) => { const has = so.clips.some((c) => c.line === x.d.line_id); return `<div class="vline"><span class="chip ${has ? "ok" : ""}">${has ? "Recorded" : "No recording"}</span><span class="grow">${esc(x.d.text)} <span class="small muted">shot ${esc(x.shot)}</span></span>
+          ${(() => { const rec = so.clips.find((c) => c.line === x.d.line_id && !c.off && c.url); return rec ? `<button class="btn sm" type="button" data-hear="${esc(rec.url)}" data-hear-shot="${esc(x.shot)}" data-hear-line="${esc(x.d.line_id)}" title="The words in this recording, with their times, from a Whisper on this computer (free, nothing is sent anywhere)">Write down what is said</button>` : ""; })()}
           ${recButton(t, x.d.line_id)}<label class="btn sm" style="display:inline-flex;align-items:center;cursor:pointer">${has ? "Add another file" : "Add a file"}<input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" hidden data-addsound="${esc(t.id)}" data-line="${esc(x.d.line_id)}"></label>
           ${(() => { const tk = so.clips.map((c, ci) => ({ c, ci })).filter((q) => q.c.line === x.d.line_id); return tk.length > 1 || tk.some((q) => q.c.off) ? `<div class="takerow">${tk.map((q, n) => `<span class="take ${q.c.off ? "" : "used"}">Take ${n + 1} · ${fmt(clipLen(q.c))} <button class="btn sm" data-take="hear" data-ci="${q.ci}" aria-label="Hear take ${n + 1}">▶</button>${q.c.off ? `<button class="btn sm" data-take="use" data-ci="${q.ci}">Use this</button>` : `<span class="chip ok">In use</span>`}<button class="btn sm" data-take="del" data-ci="${q.ci}" aria-label="Remove take ${n + 1}">✕</button></span>`).join("")}</div>` : ""; })()}</div>`; }).join("")}</div></div>` : ""}
       ${canRecord() ? "" : `<div class="small muted">Recording inside the app needs a safe address (https), which this one is not: “Record” opens your phone's own recorder where it has one, or lets you pick a recording you made. On the PC itself (localhost) the app records directly.</div>`}</div>`;
@@ -1118,6 +1178,10 @@
     if (docked() && S.plan.shots[i].shot_id === S.sel) drawDock();
   }
   /** After any edit: check again, save soon. redraw = true rebuilds the shot list; "soft" rebuilds only the edited card's numbers on blur. */
+  // what "Write down what is said" (hear.js) needs from this screen: the open scene, a shot's lines, and a way to put heard words into one line
+  window.IbashoHear = { scene: () => (S ? S.id : ""), busy: () => !S || busy(),
+    lines: (shot) => { const sh = S && S.plan.shots.find((x) => x.shot_id === shot); return sh ? (S.plan.dialogue || []).filter((d) => (sh.lines || []).includes(d.line_id) && d.kind !== "title").map((d) => ({ id: d.line_id, speaker: d.speaker || "", text: d.text || "" })) : []; },
+    put: (lineId, text) => { const d = S && (S.plan.dialogue || []).find((x) => x.line_id === lineId); if (!d || busy()) return false; d.text = String(text || "").replace(/\s+/g, " ").trim().slice(0, 600); changed(true); return true; } };
   function changed(redraw) {
     S.check = P.check(S.plan); drawSummary();
     drawSound(); drawAllLabel(); // clips follow their shots when lengths or order change

@@ -23,9 +23,12 @@ No model is used and nothing is paid for. Needs Pillow and numpy (the app alread
   toner.py strokes <panel layer dir> <strokes.json>                            scraping and painting back, done by hand -> a new flat picture
   toner.py flatten <layer dir> <out.png>                                       layers -> one picture (what the export will do)
   toner.py check  <picture or layer dir>                                       dots already drawn into a picture? layers on one line count?
+  toner.py moire  <exported page or a folder of page-NN.png>                   a measured moire test: is a second set of dots lying over the first?
 
-Chapter settings: <project dir>/toner.json  {"lines": 60, "angle": 45, "page_inches": 5.83, "page_px": 2048}
+Chapter settings: <project dir>/toner.json  {"lines": 60, "angle": 45, "page_inches": 5.83, "page_px": 2048, "kind": "dots"}
   lines        the line count: rows of dots to the inch on the printed page (higher = finer)
+  kind         dots (screentone dots) or noise (a fine grain, no dots) for the flat greys; a shade from light to dark is always dots
+               (the app sets lines and kind from the screen: Art, Screentone)
   page_inches  how wide the printed page is taken to be (5.83 in = A5); with page_px it gives the dot spacing in pixels
 
 Layers written for a panel (layers.json lists them, named the way a manga artist names tone layers):
@@ -150,8 +153,9 @@ def fit(picture, w, h, focus=(0.5, 0.5), zoom=1.0):
     return im.resize((w, h), Image.LANCZOS, box=(x, y, x + cw, y + ch))
 
 
-def tone_panel(picture, out, box=None, name="panel", st=None, focus=(0.5, 0.5), zoom=1.0, kind="dots"):
-    """One panel picture -> lines.png, tone and mask layers, layers.json. Returns the list of layers."""
+def tone_panel(picture, out, box=None, name="panel", st=None, focus=(0.5, 0.5), zoom=1.0, kind="dots", cover=None):
+    """One panel picture -> lines.png, tone and mask layers, layers.json. Returns the list of layers.
+    cover: for a cut-out (a break-out), what of the box the figure covers; kept as alpha.png, and the flat picture is clear outside it."""
     st = st or settings()
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     if box is None:
@@ -168,14 +172,24 @@ def tone_panel(picture, out, box=None, name="panel", st=None, focus=(0.5, 0.5), 
     closed = _arr(_img(L).filter(ImageFilter.MaxFilter(2 * r + 1)).filter(ImageFilter.MinFilter(2 * r + 1)))
     under = np.where(pen, closed, L)
     soft = _arr(_img(under).filter(ImageFilter.GaussianBlur(1.6)))
-    raw = (soft > BLACK + 0.03) & (soft < WHITE)
+    # A SOLID BLACK shape is often drawn as charcoal, not pure black: its darkness wanders either side of BLACK. Pixel by pixel
+    # that left holes: the part just lighter than BLACK was neither kept as black nor given tone, and came out white in blocks
+    # (seen on a real picture, 20 Nov 2026: a black pool ball). So a dark area is judged whole: when a fair part of it is as
+    # dark as black, all of it is solid black. A dark GREY area with no black in it is still tone.
+    black_area = np.zeros(L.shape, dtype=bool)
+    dark = soft < 0.34; dl, dn = _areas(dark)
+    if dn:
+        size = np.bincount(dl.ravel(), minlength=dn + 1); seeds = np.bincount(dl.ravel(), weights=(soft < BLACK + 0.03).ravel(), minlength=dn + 1)
+        keep = seeds > 0.25 * size; keep[0] = False; black_area = keep[dl]
+        black_area = black_area | (_grow(black_area, 3) & (L < 0.5))  # and its soft edge, so no white hairline is left inside its outline
+    raw = (soft > BLACK + 0.03) & (soft < WHITE) & ~black_area
     blur = lambda m, px: _arr(_img(m.astype(np.float32)).filter(ImageFilter.GaussianBlur(px)))
     # a hairline of grey (the soft edge of solid black) is not tone: opened with a ROUND brush, so edges stay smooth, then
     # pulled in a little: the blur above spreads a grey edge, and tone must not peep out past its outline
     grey = (blur(blur(raw, 2.0) > 0.9, 2.0) > 0.1) & raw
     grey = (blur(grey, 1.2) > 0.82) & grey
     dens = 1 - soft
-    solid = _grow(under < BLACK, 2)  # solid black: tone tucks a little way under its edge, so no white hairline shows
+    solid = _grow((under < BLACK) | black_area, 2)  # solid black: tone tucks a little way under its edge, so no white hairline shows
     levels = np.array(LEVELS, dtype=np.float32) / 100
     # every separate grey area is one tone: FLAT (one of the chapter's levels) or SHADED (a gradient), by how far its grey ranges
     labels, count = _areas(grey)
@@ -237,11 +251,15 @@ def tone_panel(picture, out, box=None, name="panel", st=None, focus=(0.5, 0.5), 
         layers.append({"name": f"{name}, gradient {st['lines']} lines", "kind": "gradient", "lines": st["lines"], "angle": st["angle"], "period_px": round(st["period"], 3),
                        "tone": "tone-gradient.png", "mask": "mask-gradient.png", "share": round(float(m.mean()), 4)})
     # the line art: whatever is darker than the tone under it (pen lines over grey, pen lines on paper), and solid black
-    alpha = np.where(under > BLACK, np.clip((under - L) / np.maximum(under - 0.06, 0.05), 0, 1), 1 - L)
+    alpha = np.where((under > BLACK) & ~black_area, np.clip((under - L) / np.maximum(under - 0.06, 0.05), 0, 1), 1 - L)
     alpha = np.where(alpha < 0.06, 0, alpha)  # paper grain is not ink
     lines = Image.merge("LA", (_img(np.zeros_like(L)), _img(alpha)))
     lines.save(out / "lines.png")
     doc = {"name": name, "box": list(box), "size": [w, h], "lines_file": "lines.png", "settings": {k: st[k] for k in ("lines", "angle", "page_inches", "page_px")}, "layers": layers}
+    if cover is not None:
+        cover.convert("L").save(out / "alpha.png"); doc["alpha_file"] = "alpha.png"
+    elif (out / "alpha.png").exists():
+        (out / "alpha.png").unlink()
     (out / "layers.json").write_text(json.dumps(doc, indent=1))
     return doc
 
@@ -300,7 +318,10 @@ def flatten_panel(layer_dir):
         if st["strokes"]:
             ink = ink * (1 - scrape_field((w, h), st["strokes"]))
     ink = np.maximum(ink, _arr(Image.open(d / doc["lines_file"]).getchannel("A")))
-    return _img(1 - ink), doc
+    flat = _img(1 - ink)
+    if doc.get("alpha_file"):  # a cut-out: clear where the figure is not
+        flat = Image.merge("LA", (flat, Image.open(d / doc["alpha_file"]).convert("L")))
+    return flat, doc
 
 
 def write_flat(layer_dir):
@@ -363,11 +384,102 @@ def baked_dots(picture):
     return best
 
 
+def moire(picture, n=512):
+    """A measured moire test on a finished page (the exported picture). Screentone is ONE lattice of dots: in the picture's
+    spectrum, peaks at the dot spacing in two directions, and their multiples. Moire is what the eye sees when a SECOND
+    lattice lies over it (dots drawn into a picture under the Toner's, two line counts meeting, dots that were resampled):
+    then there are strong peaks that do not sit on the first lattice, and the pattern the eye sees repeats at the
+    distance between the two. Pen hatching and edges are ridges, not lattices, and do not count.
+    -> {"moire": bool, "strength": the second set against the first (0.3 and over is flagged; a clean page is under 0.1),
+        "every_px": how often the pattern repeats, "at": [x, y] the middle of the worst place, "tiles": places with dots that were measured}"""
+    im = (Image.open(picture) if not isinstance(picture, Image.Image) else picture).convert("L"); iw, ih = im.size
+    out = {"moire": False, "strength": 0.0, "every_px": None, "at": None, "tiles": 0}
+    if iw < n or ih < n:
+        return out
+    yy, xx = np.mgrid[-n // 2:n // 2, -n // 2:n // 2]; rad = np.sqrt(xx * xx + yy * yy); ang = np.degrees(np.arctan2(yy, xx)) % 180
+    win = np.outer(np.hanning(n), np.hanning(n)); wsum = win.sum()
+    band = (rad > n / 16) & (rad < n / 2.05)  # repeats every 2 to 16 pixels: where dots live
+    polar = lambda p: (math.hypot(p[1], p[2]), math.degrees(math.atan2(p[2], p[1])) % 180)
+    apart = lambda a, b: min(abs(a - b), 180 - abs(a - b))
+    def look(t0):
+        """One tile (its mean taken off, windowed) -> None when it has no lattice of dots, else (first peak, strength, repeat in px)."""
+        f = np.abs(np.fft.fftshift(np.fft.fft2(t0))) / wsum * 2
+        fb = np.where(band, f, 0); floor = np.median(f[band]) + 1e-9; peaks = []
+        for _ in range(40):
+            k = int(np.argmax(fb)); py, px = divmod(k, n); v = fb[py, px]
+            if v < 0.004 or v < 12 * floor:
+                break
+            peaks.append((float(v), px - n // 2, py - n // 2))
+            fb[max(py - 3, 0):py + 4, max(px - 3, 0):px + 4] = 0
+        if not peaks or peaks[0][0] < 0.04:
+            return None
+        v1 = peaks[0]; r1, a1 = polar(v1)
+        v2 = next((p for p in peaks[1:] if abs(polar(p)[0] - r1) < 0.12 * r1 and apart(polar(p)[1], a1) > 25 and p[0] > 0.3 * v1[0]), None)
+        if v2 is None:
+            return None  # no lattice of dots here
+        off = []; best = (0.0, None)
+        for p in peaks[1:]:
+            miss = min(math.hypot(p[1] - i * v1[1] - j * v2[1], p[2] - i * v1[2] - j * v2[2]) for i in range(-4, 5) for j in range(-4, 5))
+            if miss <= 4.0:
+                continue  # on the lattice: the dots themselves
+            r0, a0 = polar(p)
+            ray = (np.minimum(np.abs(ang - a0), 180 - np.abs(ang - a0)) < 4) & (rad > 0.3 * r0) & (rad < 0.8 * r0)
+            if ray.any() and p[0] / (f[ray].max() + 1e-9) < 2.5:
+                continue  # a ridge (an edge, pen hatching), not a dot
+            off.append((p[0] / v1[0], r0, a0, miss))
+        for i, (s1, ra, aa, m1) in enumerate(off):  # a second set of dots is a lattice too: two peaks at one spacing, in two directions
+            for s2, rb, ab, m2 in off[i + 1:]:
+                if abs(ra - rb) < 0.12 * ra and apart(aa, ab) > 25:
+                    # close beside the first lattice's own peaks lies the smear every edge of a toned area makes: there it must be stronger to count
+                    st = min(s1, s2) * (1.0 if min(m1, m2) > 8 else 0.6)
+                    if st > best[0]:
+                        best = (st, n / min(m1, m2))
+        return v1, best[0], best[1]
+
+    for y in range(0, ih - n + 1, n // 2):
+        for x in range(0, iw - n + 1, n // 2):
+            t = _arr(im.crop((x, y, x + n, y + n)))
+            if t.std() < 0.012:
+                continue  # blank paper or solid black
+            t0 = t - t.mean(); got = look(t0 * win)
+            if got is None:
+                continue
+            out["tiles"] += 1
+            if got[1] >= 0.3:
+                # Moire needs the two sets of dots in the SAME place. Lettering beside a toned area is regular too (letters at an even
+                # pitch) and is not moire: so the tile is looked at again through a mask of where the first set of dots really is.
+                F = np.fft.fftshift(np.fft.fft2(t0)); v1 = got[0]
+                near = np.exp(-((xx - v1[1]) ** 2 + (yy - v1[2]) ** 2) / (2 * 6.0 ** 2))
+                amp = np.abs(np.fft.ifft2(np.fft.ifftshift(F * near)))  # how strongly the dots are there, place by place
+                mask = np.clip((amp / (amp.max() + 1e-9) - 0.3) / 0.25, 0, 1)
+                if mask.mean() < 0.03:
+                    continue
+                again = look((t - (t * mask).sum() / (mask.sum() + 1e-9)) * mask * win)
+                got = again if again is not None else (v1, 0.0, None)
+            if got[1] > out["strength"]:
+                out.update({"strength": round(float(got[1]), 3), "every_px": round(got[2], 1) if got[2] else None, "at": [x + n // 2, y + n // 2]})
+    out["moire"] = out["strength"] >= 0.3
+    return out
+
+
 def check_layers(layer_dir):
     """One line count and one angle through every layer under this folder? (Different ones moire where they meet.)"""
     docs = [json.loads(p.read_text()) for p in sorted(Path(layer_dir).rglob("layers.json"))]
     seen = {(ly["lines"], ly["angle"]) for d in docs for ly in d["layers"] if ly["kind"] != "noise"}
     return {"panels": len(docs), "layers": sum(len(d["layers"]) for d in docs), "line_counts": sorted({s[0] for s in seen}), "angles": sorted({s[1] for s in seen}), "ok": len(seen) <= 1}
+
+
+def cutout_in_box(picture, w, h, flip=False):
+    """A cut-out figure scaled whole into a box of w x h final pixels, centred (the way the page places a break-out).
+    -> (the figure on white paper, as grey; what of the box it covers)"""
+    im = Image.open(picture).convert("RGBA")
+    if flip:
+        im = im.transpose(Image.FLIP_LEFT_RIGHT)
+    k = min(w / im.width, h / im.height); nw, nh = max(1, round(im.width * k)), max(1, round(im.height * k))
+    on_paper = grey(im).resize((nw, nh), Image.LANCZOS); cover = im.getchannel("A").resize((nw, nh), Image.LANCZOS)  # scaled apart, so no dark fringe from clear pixels
+    at = ((w - nw) // 2, (h - nh) // 2)
+    L = Image.new("L", (w, h), 255); L.paste(on_paper, at); A = Image.new("L", (w, h), 0); A.paste(cover, at)
+    return L, A
 
 
 def saved_copy(project):
@@ -386,8 +498,11 @@ const spec=JSON.parse(fs.readFileSync(process.argv[2],'utf8')), k=+process.argv[
 const want=process.argv[3], pick=(pages)=>pages.find(q=>q.id===want)||(/^\\d+$/.test(want)?(pages.find(q=>q.number===+want)||pages[+want-1]):null);
 let p=pick(spec.pages), from='built';
 try { const sv=JSON.parse(fs.readFileSync(process.argv[5],'utf8')); if (Array.isArray(sv.pages) && (sv.boardAt||'')===(spec.boardAt||'')) { const q=p?sv.pages.find(x=>x.id&&x.id===p.id):pick(sv.pages); if (q&&q.layout) { p=q; from='saved'; } } } catch (e) { /* no saved copy */ }
-if (!p||!p.layout) { console.error('There is no such page with panels.'); process.exit(2); }
-console.log(JSON.stringify(R.allPanels(p.layout).map((c,i)=>({n:i+1,id:c.panel.id,image:c.panel.image||null,focus:c.panel.focus||[0.5,0.5],zoom:c.panel.zoom||1,box:c.bbox.map(v=>Math.round(v*k)),from,page:p.id||''}))))"""
+if (!p||(!p.layout&&!p.art)) { console.error('There is no such page with panels.'); process.exit(2); }
+if (!p.layout) { console.log(JSON.stringify([{n:1,id:'page',kind:'page',image:p.art,focus:[0.5,0.5],zoom:1,box:[0,0,Math.round(R.W*k),Math.round(R.H*k)],from,page:p.id||''}])); process.exit(0); }
+const cells=R.allPanels(p.layout).map((c,i)=>({n:i+1,id:c.panel.id,image:c.panel.image||null,focus:c.panel.focus||[0.5,0.5],zoom:c.panel.zoom||1,box:c.bbox.map(v=>Math.round(v*k)),from,page:p.id||''}));
+(p.layout.breakouts||[]).forEach((b,i)=>{ if (b&&b.id&&b.image&&Array.isArray(b.box)) cells.push({n:i+1,id:b.id,kind:'breakout',image:b.image,flip:!!b.flip,box:[b.box[0]*R.W,b.box[1]*R.H,b.box[2]*R.W,b.box[3]*R.H].map(v=>Math.round(v*k)),from,page:p.id||''}); });
+console.log(JSON.stringify(cells))"""
     st = settings(project)
     sv = saved_copy(project) if saved is None else saved
     out = subprocess.check_output(["node", "-e", js, str(APP / "page-editor/render.js"), str(Path(project) / "spec.json"), str(number), str(st["page_px"]), str(sv)])
@@ -412,14 +527,27 @@ def tone_page(project, number, out, saved=None, by_id=False, only=None):
             if c.get("id") in old:
                 done.append(old[c["id"]])
             continue
-        d = out / (safe(c["id"]) if by_id and c.get("id") else f"panel-{c['n']:02d}")
-        doc = tone_panel(Path(project) / c["image"], d, c["box"], f"panel {c['n']}", st, c["focus"], c["zoom"])
-        rec = {"panel": c["n"], "id": c.get("id"), "layers": [ly["name"] for ly in doc["layers"]], "baked_dots": baked_dots(Path(project) / c["image"])}
+        kind_of = c.get("kind") or "panel"; how = "noise" if st.get("kind") == "noise" else "dots"
+        if kind_of == "breakout":  # a figure that stands above the panel borders: toned on the page's own grid, in its place, and still a cut-out
+            bw, bh = c["box"][2] - c["box"][0], c["box"][3] - c["box"][1]
+            if bw < 4 or bh < 4:
+                continue
+            d = out / (safe(c["id"]) if by_id else f"breakout-{c['n']:02d}")
+            figure, cover = cutout_in_box(Path(project) / c["image"], bw, bh, c.get("flip"))
+            doc = tone_panel(figure, d, c["box"], f"break-out {c['n']}", st, kind=how, cover=cover)
+            rec = {"panel": c["n"], "id": c.get("id"), "kind": "breakout", "flip": bool(c.get("flip")), "layers": [ly["name"] for ly in doc["layers"]], "baked_dots": baked_dots(grey(Path(project) / c["image"]))}
+        else:
+            d = out / (safe(c["id"]) if by_id and c.get("id") else f"panel-{c['n']:02d}")
+            doc = tone_panel(Path(project) / c["image"], d, c["box"], "the page" if kind_of == "page" else f"panel {c['n']}", st, c["focus"], c["zoom"], kind=how)
+            rec = {"panel": c["n"], "id": c.get("id"), "layers": [ly["name"] for ly in doc["layers"]], "baked_dots": baked_dots(Path(project) / c["image"])}
+            if kind_of == "page":
+                rec["kind"] = "page"
         if by_id:
-            rec.update({"dir": d.name, "flat": write_flat(d), "box": c["box"], "image": c["image"], "focus": c["focus"], "zoom": c["zoom"], "px": W,
+            rec.update({"dir": d.name, "flat": write_flat(d), "box": c["box"], "image": c["image"], "focus": c.get("focus", [0.5, 0.5]), "zoom": c.get("zoom", 1), "px": W,
                         "strokes": len(clean_strokes(json.loads((d / "strokes.json").read_text()), doc["size"])["strokes"]) if (d / "strokes.json").exists() else 0})
         else:
-            flat, _ = flatten_panel(d); page.paste(flat, (c["box"][0], c["box"][1]))
+            flat, _ = flatten_panel(d)
+            page.paste(flat.getchannel(0), (c["box"][0], c["box"][1]), flat.getchannel("A")) if flat.mode == "LA" else page.paste(flat, (c["box"][0], c["box"][1]))
         done.append(rec)
     if not by_id:
         page.save(out / "page.png")
@@ -444,6 +572,9 @@ def main(argv):
         print(json.dumps(set_strokes(args[0], json.loads(Path(args[1]).read_text()))))
     elif cmd == "flatten":
         flatten_panel(args[0])[0].save(args[1]); print(args[1])
+    elif cmd == "moire":  # one exported page, or a folder of them (page-NN.png): one line of JSON, a result a page
+        p = Path(args[0]); files = sorted(p.glob("page-*.png")) if p.is_dir() else [p]
+        print(json.dumps([dict(moire(f), name=f.name) for f in files]))
     elif cmd == "check":
         p = Path(args[0]); print(json.dumps(check_layers(p) if p.is_dir() else baked_dots(p), indent=1))
     else:
