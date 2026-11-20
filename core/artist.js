@@ -15,6 +15,11 @@
   const BG_BW = { full: "Background: the place, drawn in a few quick thin ruler lines, mostly white.", simple: "Simple background: a hint of the place, mostly white.",
     tone: "Background: one light flat dot screentone, no details.", white: "Plain white background." };
 
+  // The Toner (19 Nov 2026): when the series has its screentone made by code, the Artist draws FLAT GREYS and no dots.
+  // The dots are laid over afterwards at the page's final size, one line count for the whole chapter, so nothing clashes.
+  const TONER_RULE = "TONE, IMPORTANT: draw NO screentone, NO halftone dots, NO dot or line patterns and no hatching used as shading. Wherever a tone belongs (hair, clothes, a shadow, a wall, the sky), fill that area with ONE FLAT, EVEN GREY: light, middle or dark. Keep each grey area clean and closed by its outline. A soft shade from light to dark is allowed only where the picture truly needs one (a floor falling into shadow). Solid black stays solid black, white stays white paper. The studio lays the real screentone over the greys afterwards.";
+  const byToner = (bible, text) => { const on = !!(bible && bible.tone_by === "toner" && !bible.colour); return text == null ? on : on ? String(text).replace(BG_BW.tone, "Background: one light, flat, even grey, no details.") : text; };
+
   function where(c, W, H) {
     const [x0, y0, x1, y1] = c.bbox, cx = (x0 + x1) / 2 / W, cy = (y0 + y1) / 2 / H, w = (x1 - x0) / W, h = (y1 - y0) / H;
     const vert = cy < 0.36 ? "top" : cy > 0.64 ? "bottom" : "middle", horiz = w > 0.8 ? "full width" : cx < 0.4 ? "left" : cx > 0.6 ? "right" : "centre";
@@ -123,8 +128,9 @@
       props.length ? `PROPS (draw each exactly as described; where a reference picture is attached, match it):\n${props.join("\n")}` : "",
       refs.length && !opts.noRefLine ? `INPUT REFERENCES, ordered: ${refs.map((n, i) => `Image ${i + 1}: ${bible.cast[n].ref_role || n}`).join("; ")}.` : "",
       readsRtl(page, R) ? RTL_PANEL : "",
-      "THE PANEL. " + (opts.own != null ? opts.own.trim() : describe(c, placed, R, named, bible.colour)),
-    ].filter(Boolean).join("\n\n");
+      "THE PANEL. " + (opts.own != null ? opts.own.trim() : byToner(bible, describe(c, placed, R, named, bible.colour))),
+      byToner(bible) ? TONER_RULE : "",
+    ].filter(Boolean).join("\n\n").replace(byToner(bible) ? "Use the one light dot tone sparingly." : "\u0000", "Use tone sparingly: one light flat grey, on few areas.");
     return { prompt, refs, size, cast, named, things };
   }
 

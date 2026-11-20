@@ -18,7 +18,7 @@ import { routeModel, orModel, videoRes, videoLen, audioRefs, estimate } from "..
 import { logSpend, guardSpend, okFrom } from "../page-editor/spend.mjs"; // the model picker (Pictures, Video)
 import { orPicture, orVideo } from "../page-editor/openrouter.mjs";
 import { inside, reserved } from "../page-editor/paths.mjs";
-import { readBody, bodyToFile, MB } from "../page-editor/limits.mjs";
+import { readBody, bodyToFile, sentBadJson, MB } from "../page-editor/limits.mjs";
 import { lockDoc, writeAtomic, writeJson, updateJson } from "../page-editor/store.mjs";
 import { webMp4, soundOf, SAFE_IN } from "../page-editor/media.mjs"; // clips re-wrapped when they already play everywhere; their sound beside them
 import { codexRun, codexLook, jsonFrom, dataFile, DATA_RULE } from "../page-editor/codex.mjs"; // untrusted text as data files; look-only jobs read-only // one change at a time per document, written whole // saved paths stay in their folder; names that are not keys
@@ -29,7 +29,7 @@ const VIDEOS = /\.(mp4|mov|m4v|webm)$/i, PICS = /\.(jpe?g|png|webp)$/i, SOUNDS =
 const raw = (req, max) => readBody(req, max); // an uploaded picture or sound, up to its limit (a clip goes to a file: bodyToFile)
 const safe = (s) => String(s || "").replace(/[^\w-]/g, "_");
 const json = (res, data, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(data)); return true; };
-const body = async (req, limit = 8 * MB) => (await readBody(req, limit)).toString(); // plans, looks and sound lists are small: 8 MB is far more than any of them
+const body = async (req, limit = 8 * MB) => (req.sentBody = (await readBody(req, limit)).toString()); // plans, looks and sound lists are small: 8 MB is far more than any of them
 const readJson = async (f, dflt) => { try { return JSON.parse(await readFile(f, "utf8")); } catch { return dflt; } };
 
 // ---- manga projects (read only) ----
@@ -395,7 +395,9 @@ const fmtS = (x) => String(Math.round(x * 10) / 10);
 function beatsOf(s) {
   const dur = +s.duration || 0, out = [];
   for (const line of String(s.beats || "").split("\n")) {
-    const m = /^\s*(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*(?:s\b)?\s*[:.)-]?\s*(.+?)\s*$/.exec(line); // "s" only as a word of its own: "0-3 she turns" keeps its "she"
+    // "s" only as a word of its own: "0-3 she turns" keeps its "she". Written with "to", a time range needs its "s" or a mark after it
+    // ("0 to 3 s she turns", "0 to 3: she turns"): "2 to 3 people enter" is a beat about people, not a timecode.
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(?:-|–)\s*(\d+(?:\.\d+)?)\s*(?:s\b)?\s*[:.)-]?\s*(.+?)\s*$/.exec(line) || /^\s*(\d+(?:\.\d+)?)\s*to\s*(\d+(?:\.\d+)?)\s*(?:s\b\s*[:.)-]?|[:.)-])\s*(.+?)\s*$/.exec(line);
     if (m && +m[2] > +m[1]) out.push({ from: +m[1], to: dur && +m[1] < dur ? Math.min(+m[2], dur) : +m[2], text: m[3] }); else if (line.trim()) out.push({ from: NaN, to: NaN, text: line.trim() });
   }
   if (!out.length) return [{ from: 0, to: dur, text: String(s.action || "the moment in the picture plays out").trim() }];
@@ -998,7 +1000,7 @@ export async function anime(req, res, url) {
     }
     return json(res, { error: "not found" }, 404);
   } catch (e) {
-    const sent = e instanceof SyntaxError && req.method !== "GET", code = e.status || (e.code === "ENOENT" ? 404 : sent ? 400 : 500); if (code >= 500) console.error(new Date().toISOString(), req.method, p, e.stack || e);
+    const sent = sentBadJson(req, e), code = e.status || (e.code === "ENOENT" ? 404 : sent ? 400 : 500); if (code >= 500) console.error(new Date().toISOString(), req.method, p, e.stack || e);
     if (res.headersSent) { res.destroy(); return true; }
     return json(res, { error: sent ? "What was sent is not readable JSON." : e instanceof SyntaxError ? "A saved file could not be read: " + e.message : e.message }, code); }
 }

@@ -92,7 +92,8 @@
       if (n > LIMITS.words) out.push({ level: "error", msg: `${n} words: over the ${LIMITS.words}-word limit. Move a beat to another page.` });
       else if (opening && !p.cover && pageNo <= LIMITS.openingPages && n > LIMITS.opening) adv(out, `${n} words on page ${pageNo}. The first ${LIMITS.openingPages} pages of a story read best with ${LIMITS.opening} or fewer: lose the reader here and they are gone. Let pictures carry more, or give the scene another page.`);
       else if (n > 55) out.push({ level: "warn", msg: `${n} words: above the 35–55 target.` });
-      if (ls.length > LIMITS.panels) out.push({ level: "error", msg: `${ls.length} panels (max ${LIMITS.panels}). Move a beat to a new page.` });
+      { const n = D && D.counted ? D.counted(ls) : ls.length; // a strip of 3 to 5 tiny panels (weight 1) reads as one panel
+        if (n > LIMITS.panels || ls.length > LIMITS.panels + 2) out.push({ level: "error", msg: `${ls.length} panels (max ${LIMITS.panels}${n < ls.length ? ", a strip of tiny panels counting as one; 8 at the very most" : ""}). Move a beat to a new page.` }); }
       const said = new Set(); cells.forEach((c) => { for (const l of (c.panel.board || {}).lines || []) if (l.kind !== "title") said.add(l.source_id || l.text); });
       if (said.size > LIMITS.lines) out.push({ level: "error", msg: `${said.size} spoken lines (max ${LIMITS.lines}). The page is crowded: move a beat to a new page.` });
       const areas = cells.map((c) => area(c.poly)).sort((a, b) => b - a);
@@ -181,6 +182,8 @@
       if (!used.has(b.source_id)) chapter.push({ level: "error", msg: `Line ${b.source_id} (${b.speaker}: “${b.text.slice(0, 40)}”) is missing from the pages.` });
       else if (norm(used.get(b.source_id)) !== norm(b.text)) chapter.push({ level: "error", msg: `Line ${b.source_id} is not word for word: “${used.get(b.source_id).slice(0, 50)}”.` });
     }
+    // 20 pages fit one post on X. It is only ever advice (19 Nov 2026): a chapter is as long as its lines need, and no line is cut to fit.
+    { const n = (spec.pages || []).length; if (n > 20) advice.push({ msg: `Advice: this chapter has ${n} pages. X takes 20 pictures a post, so pages 21 to ${n} would go in the replies. Nothing has to be cut.` }); }
     return { chapter, advice, pages };
   }
 

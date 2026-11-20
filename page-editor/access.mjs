@@ -35,8 +35,15 @@ export const isLocal = (req) => { const a = req.socket.remoteAddress || ""; if (
   return a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1"; };
 const same = (a, b) => { const x = Buffer.from(String(a).toUpperCase().replace(/[^A-Z0-9]/g, "")), y = Buffer.from(String(b).toUpperCase().replace(/[^A-Z0-9]/g, "")); return x.length === y.length && x.length > 0 && timingSafeEqual(x, y); };
 const cookieOf = (req) => { const m = new RegExp("(?:^|;\\s*)" + COOKIE + "=([^;]+)").exec(req.headers.cookie || ""); if (!m) return ""; try { return decodeURIComponent(m[1]); } catch { return ""; } };
-const tries = []; // wrong codes, newest last: a guesser gets 20 in ten minutes, from everyone together
-const tooManyTries = () => { const now = Date.now(); while (tries.length && now - tries[0] > 600000) tries.shift(); return tries.length >= 20; };
+// Wrong codes, newest last, by the device that sent them: a guesser gets 20 in ten minutes, and cannot lock anyone else out by
+// using theirs up (before 19 Nov 2026 the 20 were shared). All devices together get 200, so many guessers are still held back.
+const tries = new Map(), WINDOW = 600000;
+const fresh = (list, now) => { while (list.length && now - list[0] > WINDOW) list.shift(); return list; };
+const deviceOf = (req) => String((req.socket && req.socket.remoteAddress) || "?");
+const tooManyTries = (req) => { const now = Date.now(); let all = 0; for (const [k, l] of tries) { if (!fresh(l, now).length) tries.delete(k); else all += l.length; } return (tries.get(deviceOf(req)) || []).length >= 20 || all >= 200; };
+const wrongTry = (req) => { const k = deviceOf(req); if (!tries.has(k)) tries.set(k, []); tries.get(k).push(Date.now()); };
+/** host:port as the browser names it, lower case: an Origin ("http://name:5178") and a Host header ("name:5178") compare equal. */
+const siteOf = (v) => String(v || "").toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/\/.*$/, "");
 
 const page = (msg) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ibasho: let this device in</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0908;color:#f6f0ec;font:500 17px/1.5 system-ui,sans-serif}main{width:min(92vw,420px);padding:24px}h1{font-size:1.6rem;margin:0 0 10px;letter-spacing:-.02em}p{color:#b3a49b;margin:0 0 18px}
@@ -57,7 +64,7 @@ export async function gate(req, res, url, saved) {
   const host = hostOf(req.headers.host);
   if (!hostOk(host)) { res.statusCode = 421; res.setHeader("content-type", "text/plain; charset=utf-8"); res.end("Open Ibasho by this computer's own address (localhost or its IP address). To use another name, start it with STUDIO_HOSTS=that.name"); return false; }
   const origin = req.headers.origin, site = req.headers["sec-fetch-site"], isApi = url.pathname.startsWith("/api/");
-  const foreign = (origin && (origin === "null" || hostOf(origin.replace(/^[a-z]+:\/\//i, "")) !== host)) || ((site === "cross-site" || site === "same-site") && (isApi || req.method !== "GET"));
+  const foreign = (origin && (origin === "null" || siteOf(origin) !== siteOf(req.headers.host))) || ((site === "cross-site" || site === "same-site") && (isApi || req.method !== "GET"));
   if (foreign) { res.statusCode = 403; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ error: "This request came from another web site and was refused." })); return false; }
   if (url.pathname === "/api/access") { // the code, for the Settings screen: only to the computer that runs Ibasho
     res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store");
@@ -68,16 +75,16 @@ export async function gate(req, res, url, saved) {
   const want = await accessCode(saved);
   if (same(cookieOf(req), want)) return true;
   const key = url.searchParams.get("key") || req.headers["x-ibasho-access"];
-  if (key && !tooManyTries()) {
+  if (key && !tooManyTries(req)) {
     if (same(key, want)) {
       res.setHeader("set-cookie", `${COOKIE}=${encodeURIComponent(want)}; Max-Age=${YEAR}; Path=/; HttpOnly; SameSite=Lax`);
       if (req.headers["x-ibasho-access"]) return true; // a tool that sends the code with each request
       url.searchParams.delete("key"); res.statusCode = 303; res.setHeader("location", url.pathname + (url.searchParams.size ? "?" + url.searchParams : "")); res.end(); return false;
     }
-    tries.push(Date.now());
+    wrongTry(req);
   }
   res.setHeader("cache-control", "no-store");
   if (isApi) { res.statusCode = 401; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ error: "This device has not been let in yet. Open Ibasho in the browser and type the access code." })); return false; }
   res.statusCode = 401; res.setHeader("content-type", "text/html; charset=utf-8");
-  res.end(page(tooManyTries() ? "Too many wrong codes. Wait ten minutes and try again." : key ? "That is not the code. Check it and try again." : "")); return false;
+  res.end(page(tooManyTries(req) ? "Too many wrong codes. Wait ten minutes and try again." : key ? "That is not the code. Check it and try again." : "")); return false;
 }

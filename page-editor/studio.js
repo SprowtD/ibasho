@@ -213,7 +213,8 @@
 })();
 
 /* ---------- The Assistant (TODO 36): a chat on every screen. A screen tells it what is open and which actions it offers:
- *   Ibasho.registerAssistant({ where: () => ({...}), actions: { name: { desc, args: { arg: "what it is" }, paid, cost(args) -> usd, label(args), auto, run(args) } } })
+ *   Ibasho.registerAssistant({ where: () => ({...}), actions: { name: { desc, args: { arg: "what it is" }, paid, cost(args) -> usd, label(args), auto, check(args) -> "" or why it cannot run, run(args) -> what it did } } })
+ * What each step really did (or that it was never run, or why it failed) is shown on its button and sent back with the conversation, so the next answer rests on facts.
  * The answer's actions show as buttons; a paid one shows its price and runs only when tapped (and passes the ask-first and cap checks). ---------- */
 (function () {
   "use strict";
@@ -271,16 +272,21 @@
   function draw() {
     const log = el.querySelector("#asLog"), A = all();
     log.innerHTML = msgs.length ? msgs.map((m, i) => `<div class="as-m ${m.role}${m.err ? " err" : ""}">${esc(m.content)}${(m.actions || []).length ? `<div class="as-acts">${m.actions.map((a, j) => { const d = A[a.name];
-        return `<button class="btn${a.done ? " done" : ""}" data-act="${i}:${j}" ${a.done || !d ? "disabled" : ""}>${a.done ? "✓ " : ""}${esc(d && d.label ? d.label(a.args) : a.name.replace(/_/g, " "))}${esc(costText(d, a.args))}${a.why || a.err || !d ? `<small>${esc(a.err || (!d ? "Not available on this screen" : a.why))}</small>` : ""}</button>`; }).join("")}</div>` : ""}</div>`).join("")
-      : `<div class="as-hint">Ask about your project, or tell it what to do. It proposes each step as a button; anything that costs money waits for your tap.<br>${["What is left to draw here?", "Redraw this panel with more rain", "Make a video of the first shot"].map((t) => `<button class="btn" data-say="${esc(t)}">${esc(t)}</button>`).join("")}</div>`;
+        return `<button class="btn${a.done ? " done" : ""}" data-act="${i}:${j}" ${a.done || a.bad || !d ? "disabled" : ""}>${a.done ? "✓ " : ""}${esc(d && d.label ? d.label(a.args) : a.name.replace(/_/g, " "))}${esc(costText(d, a.args))}${a.why || a.err || !d ? `<small>${esc(a.err || (!d ? "Not available on this screen" : a.why))}</small>` : ""}</button>`; }).join("")}</div>` : ""}</div>`).join("")
+      : `<div class="as-hint">Ask about your project, or tell it what to do. It proposes each step as a button; anything that costs money waits for your tap.<br>${["What is left to draw here?", "Page 1 is crowded: spread it out", "Redraw this panel with more rain"].map((t) => `<button class="btn" data-say="${esc(t)}">${esc(t)}</button>`).join("")}</div>`;
     if (busy) log.insertAdjacentHTML("beforeend", `<div class="as-m assistant">Thinking…${busy === "codex" ? " (Codex can take a minute)" : ""}</div>`);
     log.scrollTop = log.scrollHeight;
+  }
+  /** The facts about an earlier answer's steps, for the model: what ran and what it did, what failed, what was never tapped. */
+  function stepsNote(m) {
+    if (m.role !== "assistant" || !(m.actions || []).length) return "";
+    return "\n\n[STEPS, written by the app: " + m.actions.map((a) => `${a.name}(${JSON.stringify(a.args || {}).slice(0, 200)}) = ${a.done ? "RAN: " + (a.result || a.why || "done") : a.err ? "DID NOT RUN: " + a.err : "NOT RUN (the person has not tapped it)"}`).join("; ").slice(0, 1800) + "]";
   }
   async function runAction(i, j) {
     const a = msgs[i] && msgs[i].actions[j], d = a && all()[a.name]; if (!a || !d || a.done) return;
     try {
       if (d.paid) { const c = d.cost ? d.cost(a.args) : 0; if (!(await window.Ibasho.okToSpend(c || 0, d.label ? d.label(a.args) : a.name))) return; }
-      const out = await d.run(a.args); a.done = true; delete a.err; if (typeof out === "string" && out) a.why = out;
+      const out = await d.run(a.args); a.done = true; delete a.err; a.result = typeof out === "string" && out ? out : "Done."; a.why = a.result;
     } catch (e) { a.err = e.message || String(e); }
     keep(); draw();
   }
@@ -293,10 +299,12 @@
     const A = all(), list = Object.entries(A).map(([name, d]) => ({ name, desc: d.desc, args: d.args || {}, paid: !!d.paid }));
     let where = {}; try { where = reg.where() || {}; } catch (e) { /* nothing */ }
     try {
-      const r = await fetch("/api/assistant", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: msgs.map((m) => ({ role: m.role, content: m.content })), where, actions: list }) });
+      const r = await fetch("/api/assistant", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: msgs.map((m) => ({ role: m.role, content: m.content + stepsNote(m) })), where, actions: list }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "The Assistant could not answer.");
       el.querySelector("#asModel").textContent = j.model ? "· " + j.model : "";
-      const m = { role: "assistant", content: j.reply || "(no words)", actions: j.actions || [] }; msgs.push(m); keep(); busy = false; draw();
+      const m = { role: "assistant", content: (j.reply || "(no words)") + (j.dropped ? `\n\n(${j.dropped} step${j.dropped === 1 ? "" : "s"} it proposed cannot be done from this screen and ${j.dropped === 1 ? "was" : "were"} left out.)` : ""), actions: j.actions || [] };
+      for (const a of m.actions) { const d = A[a.name]; if (d && d.check) { let why = ""; try { why = d.check(a.args) || ""; } catch (e) { why = e.message; } if (why) { a.bad = true; a.err = "Cannot run: " + why; } } } // a step that names a page or panel that is not there is shown, greyed, with the reason
+      msgs.push(m); keep(); busy = false; draw();
       for (const [k, a] of m.actions.entries()) { const d = A[a.name]; if (d && d.auto && !d.paid) await runAction(msgs.length - 1, k); } // free, harmless steps (open a panel) run by themselves
     } catch (e) { msgs.push({ role: "assistant", content: e.message, err: true }); keep(); busy = false; draw(); }
   }

@@ -25,6 +25,8 @@ function systemPrompt(where, actions, whereFile = "") {
     whereFile ? `WHAT IS OPEN NOW is in the DATA file ${whereFile} (from the screen, as JSON).` : "WHAT IS OPEN NOW (from the screen, as JSON):\n" + JSON.stringify(where).slice(0, 60000),
     "ACTIONS YOU CAN PROPOSE (the person taps a button to run each one; free ones may run by themselves):\n" + actions.map((a) => `- ${a.name}(${Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ")}): ${a.desc}${a.paid ? " [costs money]" : ""}`).join("\n"),
     "ANSWER with ONE JSON object and nothing else: {\"reply\": \"what you say to the person\", \"actions\": [{\"name\": \"<one of the actions above>\", \"args\": {...}, \"why\": \"a few words shown on the button\"}]}.",
+    "WHAT IS TRUE: nothing runs when you answer. Each action you propose becomes a button, and it runs only when the person taps it. So NEVER say that something is done, changed, started or fixed: say what each button will do when tapped. Under your earlier messages the app writes [STEPS, written by the app: ...] with what each step really did (RAN), why it failed (DID NOT RUN), or that it was never tapped (NOT RUN). When you report on earlier steps, use only that; never guess. If nothing listed can do what is asked, say so plainly, and name the closest thing that can.",
+    "THE SMALLEST STEP: change only what the person asked about. For one page or a few panels use the page and panel actions when they are listed; an action that rebuilds a whole chapter or scene is a last resort, only when the person asks for all of it to be redone, and your reply must say that it rebuilds everything and how long it takes.",
     "Rules: use only the actions listed, with ids exactly as they appear in WHAT IS OPEN. Propose actions only when the person asks for something to be done (or clearly would want it); otherwise actions is []. Several actions are fine (for example one per panel). Never invent panels, shots or names. If something cannot be done from here, say where in the app to do it. Write a direction note in the person's own words when they give one; keep the story's characters and facts as they are in the project.",
   ].join("\n\n");
 }
@@ -44,19 +46,21 @@ function parse(text, names) {
   const t = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, ""), a = t.indexOf("{"), b = t.lastIndexOf("}");
   let j = null; try { j = JSON.parse(t.slice(a, b + 1)); } catch { /* plain words */ }
   if (!j || typeof j !== "object") return { reply: t.slice(0, 4000) || "(no answer)", actions: [] };
-  return { reply: String(j.reply || "").slice(0, 4000), actions: (Array.isArray(j.actions) ? j.actions : []).filter((x) => x && names.has(x.name)).slice(0, 24).map((x) => ({ name: x.name, args: x.args && typeof x.args === "object" ? x.args : {}, why: String(x.why || "").slice(0, 140) })) };
+  const asked = (Array.isArray(j.actions) ? j.actions : []).filter((x) => x && typeof x === "object"), dropped = asked.filter((x) => !names.has(x.name)).length; // steps it made up are counted, so the person is told
+  return { reply: String(j.reply || "").slice(0, 4000), ...(dropped ? { dropped } : {}), actions: asked.filter((x) => names.has(x.name)).slice(0, 24).map((x) => ({ name: x.name, args: x.args && typeof x.args === "object" ? x.args : {}, why: String(x.why || "").slice(0, 140) })) };
 }
 
 const readBody = (req) => readJson(req, 2 * MB); // the conversation and the open screen: far less than this
 const json = (res, data, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store"); res.end(JSON.stringify(data)); return true; };
 
 /** POST /api/assistant { messages: [{ role: "user" | "assistant", content }], where, actions: [{ name, desc, args, paid }] } -> { reply, actions, model, cost } */
+export { parse as parseAnswer, systemPrompt };
 export async function assistant(req, res, url, saved) {
   if (url.pathname !== "/api/assistant" || req.method !== "POST") return false;
   try {
     const b = await readBody(req), short = (v, n) => String(v == null ? "" : typeof v === "string" ? v : JSON.stringify(v)).slice(0, n);
     const actions = (Array.isArray(b.actions) ? b.actions : []).slice(0, 40).filter((a) => a && typeof a.name === "string").map((a) => ({ name: a.name.slice(0, 60), desc: short(a.desc, 600), args: a.args && typeof a.args === "object" ? Object.fromEntries(Object.entries(a.args).slice(0, 12).map(([k, v]) => [k.slice(0, 40), short(v, 200)])) : {}, paid: !!a.paid })), names = new Set(actions.map((a) => a.name)); // what the screen may offer, cut to size: this text is paid for by the letter
-    const msgs = (Array.isArray(b.messages) ? b.messages : []).filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content).slice(-16).map((m) => ({ role: m.role, content: String(m.content).slice(0, 6000) }));
+    const msgs = (Array.isArray(b.messages) ? b.messages : []).filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content).slice(-16).map((m) => ({ role: m.role, content: String(m.content).slice(0, 8000) }));
     if (!msgs.length || msgs[msgs.length - 1].role !== "user") return json(res, { error: "Say something first." }, 400);
     const sys = systemPrompt(b.where || {}, actions), r = await routeModel(saved, "text");
     if (r.service === "openrouter") {

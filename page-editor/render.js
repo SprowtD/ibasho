@@ -26,6 +26,7 @@
     ambient: { label: "Ambient", hint: "No balloon: breaths, glances, silence", font: "patrick", size: 30, floor: 22, lh: 1.1, px: 0, py: 0, width: 0.3, shape: "none", rotate: -6 },
     crowd:   { label: "Crowd",   hint: "Background voices, small",    font: "playpen",   size: 22, floor: 20, lh: 1.18, px: 14, py: 10, width: 0.18, shape: "thin" },
     phone:   { label: "Phone",   hint: "Screen or message text",      font: "comicneue", size: 26, floor: 22, lh: 1.2,  px: 18, py: 14, width: 0.3,  shape: "phone" },
+    sfx:     { label: "Sound effect", hint: "Huge letters across the picture, no balloon", font: "bangers", size: 120, floor: 40, lh: 0.95, px: 0, py: 0, width: 0.7, shape: "none", upper: true, rotate: -8, sfx: true },
     title:   { label: "Title",   hint: "Chapter title, no balloon",   font: "vollkorn",  size: 44, floor: 30, lh: 1.1,  px: 0,  py: 0,  width: 0.8,  shape: "none", allBold: true },
   };
   const TAIL_KINDS = new Set(["speech", "shout", "whisper", "crowd", "phone", "thought"]);
@@ -176,8 +177,10 @@
   function textSvg(L) {
     const { st, f, size, lines, widths, lh, th, cx, cy, tw } = L;
     const left = st.shape === "box";
-    const ink = L.item.ink || "#000";
-    const halo = st.shape === "none" ? ` stroke="#fff" stroke-width="${r1(size * 0.22)}" stroke-linejoin="round" paint-order="stroke"` : "";
+    // a sound effect: solid letters with a thick edge in the other colour, so it reads over any picture; "hollow" swaps the two
+    const ink = st.sfx && L.item.hollow ? "#fff" : L.item.ink || "#000";
+    const halo = st.sfx ? ` stroke="${L.item.hollow ? esc(L.item.ink || "#000") : "#fff"}" stroke-width="${r1(size * 0.13)}" stroke-linejoin="round" paint-order="stroke"`
+      : st.shape === "none" ? ` stroke="#fff" stroke-width="${r1(size * 0.22)}" stroke-linejoin="round" paint-order="stroke"` : "";
     let out = "";
     lines.forEach((line, i) => {
       const y = cy - th / 2 + lh * i + lh * 0.76;
@@ -337,6 +340,18 @@
     acc.colLines.push(...colLines);
   }
 
+  const validShape = (s) => Array.isArray(s) && s.length >= 3 && s.length <= 64 && s.every((p) => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  const sh3 = (v) => Math.round(v * 1000) / 1000;
+  /** Ready-made shapes, as shares of the panel's box. Each is the same every time (nothing random), so a page looks the same on every screen. */
+  const SHAPES = {
+    slant: { label: "Slanted", make: () => [[0.1, 0], [1, 0], [0.9, 1], [0, 1]] },
+    jagged: { label: "Jagged", make: () => { // straight sides broken into teeth, uneven on purpose
+      const out = [], side = (a, b, n, nx, ny) => { for (let i = 0; i < n; i++) { const t = i / n, d = i === 0 ? 0 : (i % 2 ? -0.045 : 0.03) * (1 + ((i * 7) % 3) * 0.25); out.push([sh3(a[0] + (b[0] - a[0]) * t + nx * d), sh3(a[1] + (b[1] - a[1]) * t + ny * d)]); } };
+      side([0, 0], [1, 0], 6, 0, -1); side([1, 0], [1, 1], 5, 1, 0); side([1, 1], [0, 1], 6, 0, 1); side([0, 1], [0, 0], 5, -1, 0); return out; } },
+    burst: { label: "Burst", make: () => { const out = [], n = 14; for (let i = 0; i < n * 2; i++) { const a = Math.PI * i / n - Math.PI / 2, r = i % 2 ? 0.37 + ((i * 5) % 3) * 0.015 : 0.5; out.push([sh3(0.5 + Math.cos(a) * r), sh3(0.5 + Math.sin(a) * r)]); } return out; } },
+    oval: { label: "Oval", make: () => { const out = [], n = 32; for (let i = 0; i < n; i++) { const a = 2 * Math.PI * i / n - Math.PI / 2; out.push([sh3(0.5 + Math.cos(a) * 0.5), sh3(0.5 + Math.sin(a) * 0.5)]); } return out; } },
+  };
+
   /** Full geometry: leaf cells (in reading order) with polygons, gutter centre lines, and insets. */
   function layoutGeom(layout) {
     const acc = { cells: [], rowLines: [], colLines: [] };
@@ -364,6 +379,15 @@
       } else c.drawPoly = c.poly;
       const xs = c.drawPoly.map((p) => p[0]), ys = c.drawPoly.map((p) => p[1]);
       c.bbox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      // A panel's own shape: corners placed by hand, as shares of the plain panel's box (its "frame"); a corner may sit outside
+      // the frame, so a panel can break out of its place. On a right-to-left page a panel in the rows is mirrored with the page.
+      if (validShape(c.panel.shape)) {
+        const [x0, y0, x1, y1] = c.bbox, w = x1 - x0, h = y1 - y0, mir = rtl && !c.inset;
+        c.frame = c.bbox; c.mirrored = mir; c.shaped = true;
+        c.drawPoly = c.poly = c.panel.shape.map(([u, v]) => [Math.min(W, Math.max(0, mir ? x1 - u * w : x0 + u * w)), Math.min(H, Math.max(0, y0 + v * h))]);
+        const sx = c.poly.map((p) => p[0]), sy = c.poly.map((p) => p[1]);
+        c.bbox = [Math.min(...sx), Math.min(...sy), Math.max(...sx), Math.max(...sy)];
+      }
     }
     return { cells: acc.cells, rowLines: acc.rowLines, colLines: acc.colLines, insets, rtl };
   }
@@ -457,6 +481,19 @@
     const out = [];
     allPanels(page.layout).forEach((c, i) => { for (const l of (c.panel.board && c.panel.board.lines) || []) out.push(Object.assign({ panel: i + 1 }, l)); });
     return out;
+  }
+
+  /** Where a balloon sits to tie its panel to the next one in reading order: on the border between the two, as near as it can
+   *  stay to where it is now. -> [x, y] in page units, or null (the last panel of the page has no next one). */
+  function bridgeSpot(page, item) {
+    if (!page.layout) return null;
+    const cells = allPanels(page.layout), i = cells.findIndex((c) => c.panel.id === item.panel); if (i < 0 || !cells[i + 1]) return null;
+    const a = cells[i].bbox, b = cells[i + 1].bbox, cx = item.at[0] * W, cy = item.at[1] * H, mid = (lo, hi, v) => (lo <= hi ? Math.min(hi, Math.max(lo, v)) : (lo + hi) / 2);
+    const xs = [Math.max(a[0], b[0]), Math.min(a[2], b[2])], ys = [Math.max(a[1], b[1]), Math.min(a[3], b[3])];
+    if (xs[1] - xs[0] > 60 && ys[1] - ys[0] <= 0) return [mid(xs[0] + 90, xs[1] - 90, cx), b[1] >= a[3] ? (a[3] + b[1]) / 2 : (b[3] + a[1]) / 2]; // one above the other
+    if (ys[1] - ys[0] > 60 && xs[1] - xs[0] <= 0) return [b[0] >= a[2] ? (a[2] + b[0]) / 2 : (b[2] + a[0]) / 2, mid(ys[0] + 60, ys[1] - 60, cy)]; // side by side
+    const near = (p, q, v) => Math.min(q, Math.max(p, v)), pa = [near(a[0], a[2], (b[0] + b[2]) / 2), near(a[1], a[3], (b[1] + b[3]) / 2)], pb = [near(b[0], b[2], pa[0]), near(b[1], b[3], pa[1])];
+    return [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2]; // they only meet at a corner
   }
 
   /** The Letterer's placement pass: turns a plan (who says what, in which panel, as which type) into placed balloons.
@@ -621,6 +658,13 @@
         item.tail = [Math.round(tx / W * 1000) / 1000, Math.round(ty / H * 1000) / 1000];
       }
       item.panel = cell.panel.id;
+      if (line.bridge && !line.join) { // the storyboard asks for this line to tie its panel to the next: onto the border, when no face is under it there
+        const spot = bridgeSpot(page, item), hw = L.rx + 6, hh = L.ry + 6;
+        if (spot) { const r = [spot[0] - hw, spot[1] - hh, spot[0] + hw, spot[1] + hh];
+          const clear = r[0] > 8 && r[2] < W - 8 && r[1] > 8 && r[3] < H - 8 && !faces.some((fz) => overlap(r, core(fz.box)) > 0) && !placed.some((p) => overlap(r, p.rect) > 0);
+          if (clear) { const dx = spot[0] - best.cx, dy = spot[1] - best.cy; item.at = [Math.round(spot[0] / W * 1000) / 1000, Math.round(spot[1] / H * 1000) / 1000]; item.bridge = true; item.bleed = true;
+            best = Object.assign({}, best, { cx: spot[0], cy: spot[1], rect: r, text: [best.text[0] + dx, best.text[1] + dy, best.text[2] + dx, best.text[3] + dy] }); } }
+      }
       placed.push({ cx: best.cx, cy: best.cy, ox: best.ox, oy: best.oy, rect: best.rect, text: best.text });
       items.push(item);
     }
@@ -663,10 +707,13 @@
   function layoutSvg(page, href, sizes) {
     let out = `<rect x="0" y="0" width="${W}" height="${H}" fill="#fff"/>`;
     const G = layoutGeom(page.layout);
-    G.cells.concat(G.insets).forEach((c, n) => {
+    G.cells.filter((c) => !c.shaped).concat(G.cells.filter((c) => c.shaped), G.insets).forEach((c, n) => { // a panel with a shape of its own may reach over its neighbours: it is drawn after the plain ones
       const p = c.panel, pts = poly(c.drawPoly), [x0, y0, x1, y1] = c.bbox, w = x1 - x0, h = y1 - y0;
-      if (c.inset) out += `<polygon points="${pts}" fill="#fff" stroke="#fff" stroke-width="${GUTTER * 1.6}" stroke-linejoin="miter"/>`;
-      if (p.image) {
+      if (c.inset || c.shaped) out += `<polygon points="${pts}" fill="#fff" stroke="#fff" stroke-width="${GUTTER * 1.6}" stroke-linejoin="miter"/>`; // a white gutter of its own, over whatever is under it
+      if (p.image && toneState(c) === "toned") { // the Toner's picture of this panel, made at the page's final size: placed dot for dot, never scaled
+        const t = p.toned, k = (t.px || 2048) / W;
+        out += `<clipPath id="pc${n}"><polygon points="${pts}"/></clipPath><g clip-path="url(#pc${n})"><image href="${esc(href(t.src))}" x="${t.box[0] / k}" y="${t.box[1] / k}" width="${(t.box[2] - t.box[0]) / k}" height="${(t.box[3] - t.box[1]) / k}" preserveAspectRatio="none"/></g>`;
+      } else if (p.image) {
         const cw = cropWindow(p, w, h, sizes[p.image]);
         out += `<clipPath id="pc${n}"><polygon points="${pts}"/></clipPath><g clip-path="url(#pc${n})"><svg x="${r1(x0)}" y="${r1(y0)}" width="${r1(w)}" height="${r1(h)}" viewBox="${r1(cw.x)} ${r1(cw.y)} ${r1(cw.cw)} ${r1(cw.ch)}" preserveAspectRatio="none"><image href="${esc(href(p.image))}" x="0" y="0" width="${cw.iw}" height="${cw.ih}"/></svg></g>`;
       } else if (p.board) {
@@ -676,6 +723,34 @@
       }
       if (!p.type || p.type === "framed") out += `<polygon points="${pts}" fill="none" stroke="#000" stroke-width="${BORDER}" stroke-linejoin="miter"/>`;
     });
+    out += breakoutsSvg(page, href);
+    return out;
+  }
+  /** Has the Toner toned this panel, and is its toned picture still right for it? "" (never toned) | "toned" | "stale"
+   *  (the panel's picture, place on the page, or crop has changed since: the plain picture shows until the page is toned again).
+   *  panel.toned = { src, box: the panel's box in final pixels, px: the page's width in those pixels, of: the picture toned, focus, zoom, layers, baked, strokes } */
+  function toneState(c) {
+    const p = c.panel, t = p.toned; if (!t || !p.image || !t.src || !Array.isArray(t.box)) return "";
+    const k = (t.px || 2048) / W, f = p.focus || [0.5, 0.5], tf = t.focus || [0.5, 0.5];
+    const same = t.of === p.image && c.bbox.every((v, i) => Math.round(v * k) === t.box[i]) && Math.abs(f[0] - tf[0]) < 1e-6 && Math.abs(f[1] - tf[1]) < 1e-6 && Math.abs((p.zoom || 1) - (t.zoom || 1)) < 1e-6;
+    return same ? "toned" : "stale";
+  }
+  /** Every picture file a page shows (panel art or its toned picture, break-outs), for anything that must load them first. */
+  function pictures(page) {
+    const out = new Set(); if (!page.layout) { if (page.art) out.add(page.art); return [...out]; }
+    for (const c of allPanels(page.layout)) if (c.panel.image) out.add(toneState(c) === "toned" ? c.panel.toned.src : c.panel.image);
+    for (const b of page.layout.breakouts || []) if (b && b.image) out.add(b.image);
+    return [...out];
+  }
+  /** Break-outs: figures drawn as their own cut-out pictures, standing above the panel borders (and under the lettering).
+   *  layout.breakouts = [{ id, box: [x0, y0, x1, y1] as shares of the page, image, flip, who, action, panel }]. One not drawn yet shows nothing here. */
+  function breakoutsSvg(page, href) {
+    let out = "";
+    for (const b of (page.layout && page.layout.breakouts) || []) {
+      if (!b || !b.image || !Array.isArray(b.box)) continue;
+      const x = b.box[0] * W, y = b.box[1] * H, w = (b.box[2] - b.box[0]) * W, h = (b.box[3] - b.box[1]) * H;
+      out += `<image href="${esc(href(b.image))}" x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" preserveAspectRatio="xMidYMid meet"${b.flip ? ` transform="translate(${r1(2 * x + w)} 0) scale(-1 1)"` : ""}/>`;
+    }
     return out;
   }
 
@@ -683,9 +758,14 @@
   function check(page, Ls, protect) {
     const out = [];
     const add = (level, msg, i) => out.push({ level, msg, i });
-    const words = Ls.filter((L) => L.kind !== "title" && L.kind !== "ambient").reduce((a, L) => a + plain(L.item.text).split(/\s+/).filter(Boolean).length, 0);
+    const words = Ls.filter((L) => L.kind !== "title" && L.kind !== "ambient" && L.kind !== "sfx").reduce((a, L) => a + plain(L.item.text).split(/\s+/).filter(Boolean).length, 0);
     if (words > LIMITS.wordsPage) add("warn", `${words} words on this page (limit ${LIMITS.wordsPage}). Move a beat to another page.`, -1);
     const panels = panelsFrac(page).map((b) => [b[0] * W, b[1] * H, b[2] * W, b[3] * H]);
+    if (page.layout) allPanels(page.layout).forEach((c, n) => { // the Toner's work on this page
+      const st = toneState(c);
+      if (st === "stale") add("warn", `Panel ${n + 1} has changed since it was toned (its picture, its place or its crop), so its plain picture is showing. Tone the page again.`, -1);
+      if (st === "toned" && c.panel.toned.baked) add("warn", `Panel ${n + 1}: dots are already drawn into its picture, under the Toner's dots. Two sets of dots can clash (moire). Draw it again with flat greys.`, -1);
+    });
     Ls.forEach((L, i) => {
       const text = plain(L.item.text);
       if (L.size < L.st.floor - 0.01) add("error", `Text is ${Math.round(L.size)}u, below the ${L.st.floor}u phone-size floor. Split the line or widen the balloon.`, i);
@@ -694,13 +774,18 @@
       if (L.lines.length > LIMITS.lines) add("warn", `${L.lines.length} lines. Split into two joined balloons.`, i);
       const n = text.split(/\s+/).filter(Boolean).length;
       if (L.kind !== "title" && n > LIMITS.wordsBalloon) add("warn", `${n} words in one balloon. Split it.`, i);
+      if (L.kind === "sfx" && n > 4) add("warn", `${n} words in a sound effect. A sound is a word or two; use a caption for the rest.`, i);
       if (L.hasTail) {
         const d = Math.hypot(L.item.tail[0] * W - L.cx, L.item.tail[1] * H - L.cy) - Math.min(L.rx, L.ry);
         if (d > LIMITS.tail) add("warn", "Long tail. Move the balloon nearer its speaker.", i);
       } else if ((L.kind === "speech" || L.kind === "whisper") && !L.item.join) {
         add("warn", "No tail. Only right for an off-panel voice or a joined balloon.", i);
       }
-      if (L.kind !== "title" && !L.item.bleed) {
+      if (L.item.bridge) { // a balloon that ties two panels together sits ON the border between them
+        const over = panels.filter(([x0, y0, x1, y1]) => L.cx + ox > x0 && L.cx - ox < x1 && L.cy + oy > y0 && L.cy - oy < y1).length;
+        if (over < 2) add("warn", "A bridging balloon belongs across the border between two panels. Move it onto the border, or turn “Bridges to the next panel” off.", i);
+      }
+      if (L.kind !== "title" && L.kind !== "sfx" && !L.item.bleed && !L.item.bridge) {
         for (const [x0, y0, x1, y1] of panels) {
           if (L.cx >= x0 && L.cx <= x1 && L.cy >= y0 && L.cy <= y1) {
             if (L.cx - ox < x0 || L.cx + ox > x1 || L.cy - oy < y0 || L.cy + oy > y1) add("warn", "Spills out of its panel. Move it, or turn on “Crosses panel edge”.", i);
@@ -716,7 +801,7 @@
     { // reading order: balloons of one panel are listed in speaking order, so each must sit after the one before it
       const rtl = isRtl(page.layout), fwd = rtl ? -1 : 1, last = new Map();
       Ls.forEach((L, i) => {
-        const pid = L.item.panel; if (!pid || L.item.free || L.kind === "title") return;
+        const pid = L.item.panel; if (!pid || L.item.free || L.kind === "title" || L.kind === "sfx") return; // a sound effect is not read in turn
         const prev = last.get(pid); last.set(pid, L);
         if (!prev) return;
         const oy = outer(prev)[1] + 8;
@@ -728,7 +813,7 @@
       const [ax, ay] = outer(A);
       for (let j = 0; j < i; j++) {
         const B = Ls[j], [bx, by] = outer(B);
-        if (A.item.join || B.item.join) continue;
+        if (A.item.join || B.item.join || A.kind === "sfx" || B.kind === "sfx") continue; // big letters may run behind a balloon on purpose
         if (Math.abs(A.cx - B.cx) < ax + bx && Math.abs(A.cy - B.cy) < ay + by) add("warn", `Overlaps “${plain(B.item.text).slice(0, 24)}”. Turn on “Joined” if that is on purpose.`, i);
       }
     });
@@ -736,5 +821,5 @@
   }
 
   g.PageRender = { W, H, MARGIN, GUTTER, FONTS, KINDS, TAIL_KINDS, PANEL_TYPES, measure, outer, letteringSvg, pageNumberSvg, check, plain, esc, styleFor,
-    layoutBoxes, layoutGeom, allPanels, isRtl, panelsFrac, cropWindow, artMap, layoutSvg, protectBoxes, faceZones, autoPlace, planFor, boardHeads };
+    layoutBoxes, layoutGeom, allPanels, isRtl, panelsFrac, cropWindow, artMap, layoutSvg, protectBoxes, faceZones, autoPlace, planFor, boardHeads, bridgeSpot, breakoutsSvg, SHAPES, validShape, toneState, pictures };
 })(typeof window !== "undefined" ? window : globalThis);

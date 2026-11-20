@@ -8,7 +8,7 @@ import { choiceFor } from "./models.mjs";
 const HIST = (saved) => join(saved, "work.json"), TIMES = (saved) => join(saved, "work-times.json");
 const readJson = async (f, d) => { try { return JSON.parse(await readFile(f, "utf8")); } catch { return d; } };
 // Usual seconds before this computer has its own figures.
-const DEFAULT = { picture: { codex: 180, openrouter: 45 }, video: { openrouter: 150 }, storyboard: { codex: 420, openrouter: 90 }, check: { codex: 600 }, sheet: { codex: 150, openrouter: 45 }, look: { codex: 60 } };
+const DEFAULT = { picture: { codex: 180, openrouter: 45 }, video: { openrouter: 150 }, storyboard: { codex: 420, openrouter: 90 }, check: { codex: 600 }, sheet: { codex: 150, openrouter: 45 }, look: { codex: 60 }, tone: { codex: 45 } };
 
 /** What kind of work a queue job is: picture | video | storyboard | check | sheet | look. */
 export function typeOf(j) {
@@ -18,6 +18,7 @@ export function typeOf(j) {
   if (j.kind === "check") return "check";
   if (j.kind === "sheet") return "sheet";
   if (j.kind === "look") return "look";
+  if (j.kind === "tone") return "tone";
   return "picture";
 }
 /** A short plain label and where to look at the result. */
@@ -29,6 +30,8 @@ export function describe(j) {
   else if (j.kind === "paneler") { label = `${j.project} · storyboard`; link = "/#home"; }
   else if (j.kind === "check") { label = `${j.project} · asset check`; link = "/"; }
   else if (j.kind === "sheet") { label = `${j.project} · sheet: ${j.name}`; link = "/"; }
+  else if (j.kind === "tone") { label = `${j.project} · the Toner${j.only ? ", one panel" : ""}`; link = "/"; }
+  else if (j.kind === "breakout") { label = `${j.project} · break-out${j.name ? ": " + j.name : ""}`; link = "/"; }
   else if (j.kind === "look") { label = `${j.project} · looking for faces`; link = "/"; }
   else { label = `${j.project} · panel ${j.panel}`; link = "/"; }
   return { type: t, label, link, model: m };

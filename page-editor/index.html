@@ -225,6 +225,14 @@ body.at-home .shell { grid-template-columns: minmax(0, 1fr); }
 .person b { font-size: .95rem; }
 .person small { color: var(--muted); font-size: .84rem; }
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ex-pages { display: flex; flex-wrap: wrap; gap: 6px; max-height: 30vh; overflow: auto; }
+.ex-pages .btn { min-width: 44px; min-height: 40px; }
+.ex-pages .btn[aria-pressed="true"] { background: var(--blue); border-color: var(--blue); color: #fff; }
+#exDlg { width: min(520px, calc(100vw - 24px)); }
+#toneDlg { width: min(760px, calc(100vw - 16px)); }
+.tone-stage { display: grid; place-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+#toneCanvas { max-width: 100%; max-height: 56vh; touch-action: none; cursor: crosshair; background: #fff; }
+#toneBox { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
 #sbDlg textarea { width: 100%; min-height: 96px; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: inherit; box-sizing: border-box; }
 #sbDlg { max-width: 560px; }
 #sbDlg .warnbox { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--bg); border-left: 4px solid var(--amber); font-size: .9rem; }
@@ -245,6 +253,8 @@ body.at-home .shell { grid-template-columns: minmax(0, 1fr); }
 .tmpl[data-best] { border-color: var(--accent, #d9482b); box-shadow: 0 0 0 1px var(--accent, #d9482b); }
 .tmpl { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 4px; display: grid; gap: 2px; font: 500 .68rem var(--mono); color: var(--muted); }
 .tmpl svg { width: 100%; height: auto; display: block; }
+.tmpls[data-mine="1"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tmpls[data-mine="1"] .tmpl { grid-column: 1; } .tmpl-x { align-self: center; justify-self: start; min-height: 44px; }
 #page.layout-mode .ol, #page.layout-mode .fl, #page.layout-mode .ov, #page.layout-mode .tx { opacity: .3; }
 #page .layout { pointer-events: none; }
 #page .phit { fill: transparent; cursor: move; }
@@ -254,6 +264,15 @@ body.at-home .shell { grid-template-columns: minmax(0, 1fr); }
 #page .gut-knob { fill: #fff; stroke: #2c63d6; stroke-width: 4; }
 #page .tilt-knob { fill: #2c63d6; stroke: #fff; stroke-width: 3; cursor: ew-resize; }
 #page .inset-knob { fill: #2c63d6; stroke: #fff; stroke-width: 4; cursor: move; }
+#page .vtx { fill: #fff; stroke: #2c63d6; stroke-width: 6; cursor: move; }
+#page .vtx[data-on="1"] { fill: #2c63d6; stroke: #fff; }
+#page .vadd { fill: #2c63d6; stroke: #fff; stroke-width: 3; cursor: copy; opacity: .8; }
+#page .vadd-i { stroke: #fff; stroke-width: 3; pointer-events: none; }
+#page .free-line { fill: rgb(44 99 214 / .1); stroke: #2c63d6; stroke-width: 4; stroke-dasharray: 12 8; pointer-events: none; }
+#page.placing { cursor: crosshair; }
+#page .bo-wait { fill: rgb(44 99 214 / .08); stroke: #2c63d6; stroke-width: 3; stroke-dasharray: 14 9; pointer-events: none; }
+#page .bo-wait-t { font: 700 26px var(--sans, sans-serif); fill: #2c63d6; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #fff; stroke-width: 6; }
+#boTools { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
 #page .knob-icon { stroke: #fff; stroke-width: 3; fill: none; pointer-events: none; }
 #page .sel { stroke-linejoin: round; }
 #anchorWrap { display: grid; gap: 2px; }
@@ -377,7 +396,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   <button class="btn" id="redoBtn" type="button" disabled>Redo</button>
   <label class="check-inline"><input type="checkbox" id="guidesChk" checked> Guides</label>
   <span class="spacer"></span>
-  <button class="btn" id="exportBtn" type="button">Export PNG</button>
+  <button class="btn" id="exportBtn" type="button">Export</button>
 </div>
 
 <section id="homeView" hidden>
@@ -450,6 +469,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   <p class="hint" id="seStyleNote" style="margin:0"></p>
   <div class="field se-box"><span class="lbl">Reading direction <output>the whole series</output></span>
     <div class="segs" id="seReading" role="group" aria-label="Reading direction"></div><small class="hint" id="seReadingNote" style="margin:0"></small></div>
+  <label class="check-inline se-box" style="display:flex" id="seTonerBox"><input type="checkbox" id="seToner"> <span>Screentone made by the Toner <small style="display:block;color:var(--muted)">The Artist draws flat greys and no dots. The Toner then lays real screentone over them, one size of dot for the whole chapter, so nothing clashes and you can scrape it or paint it back by hand. Pictures drawn before this was turned on keep their own dots until they are drawn again.</small></span></label>
   <label class="check-inline se-box" style="display:flex"><input type="checkbox" id="seStrict"> <span>Only draw a character who has an approved sheet <small style="display:block;color:var(--muted)">A panel with anyone else in it is refused until their sheet is added and approved. Books start with this on.</small></span></label>
   <label class="check-inline se-box" style="display:flex"><input type="checkbox" id="seNoNames"> <span>Leave names out of picture prompts <small style="display:block;color:var(--muted)">For fan fiction and well-known books: picture services refuse prompts that name famous characters, places and things. With this on, each name below is swapped for its stand-in just before a picture is asked for. Only the picture prompt changes: the storyboard and the lettering keep the book's own words. The attached sheets still keep everyone looking the same.</small></span></label>
   <div class="field se-box" id="seStandInsBox" hidden><label for="seStandIns">Stand-ins <output>one per line: Name = what the picture service is told instead</output></label><textarea id="seStandIns" rows="8" placeholder="Sherlock = the tall, thin detective in a deerstalker&#10;Baker Street = the foggy Victorian street"></textarea></div>
@@ -474,7 +494,8 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
     <div id="chapterHead"></div>
     <div class="row"><button class="btn primary" id="letterAllBtn" type="button">Letterer: letter every page</button>
     <button class="btn" id="drawAllBtn" type="button" hidden></button>
-    <button class="btn" id="exportAllBtn" type="button" hidden>Export the chapter</button>
+    <button class="btn" id="toneAllBtn" type="button" hidden>Toner: tone every page</button>
+    <button class="btn" id="exportAllBtn" type="button" hidden>Export</button>
     <button class="btn" id="coverBtn" type="button" hidden>Add a cover</button>
     <button class="btn" id="reboardBtn" type="button" hidden>Storyboard again</button></div>
   </div>
@@ -536,6 +557,8 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
         <label><input type="checkbox" id="tailChk"> Tail</label>
         <label><input type="checkbox" id="joinChk"> Joined to the next balloon (pause)</label>
         <label><input type="checkbox" id="bleedChk"> Crosses panel edge</label>
+        <label><input type="checkbox" id="bridgeChk"> Bridges to the next panel</label>
+        <label><input type="checkbox" id="hollowChk"> Hollow letters (white, dark edge)</label>
         <div id="anchorWrap" hidden>
           <label><input type="checkbox" id="anchorChk"> Moves with its panel</label>
           <p class="hint" id="anchorInfo"></p>
@@ -556,6 +579,12 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
           <div class="field">
             <span class="lbl">Panel border</span>
             <div class="segs" id="ptypes"></div>
+          </div>
+          <div class="field">
+            <span class="lbl">Shape <output>corners placed by hand</output></span>
+            <div class="segs wrap" id="pshapes"></div>
+            <div class="row"><button class="btn" id="shapeEdit" type="button">Edit corners</button><button class="btn" id="shapeDel" type="button" hidden>Remove this corner</button></div>
+            <p class="hint" id="shapeHint" hidden>Drag a dot to move a corner; it may go outside the panel's place. Tap a small + on an edge to add a corner there.</p>
           </div>
           <div class="field" id="pjobField">
             <label for="pjob">What this panel is for <output>its job on the page</output></label>
@@ -588,6 +617,15 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
           <div class="tray" id="tray"></div>
         </div>
         <button class="btn" id="insetBtn" type="button">+ Inset panel</button>
+        <div class="row"><button class="btn" id="freeBtn" type="button">+ Free-shape panel</button><button class="btn" id="freeCancel" type="button" hidden>Cancel</button></div>
+        <button class="btn" id="boBtn" type="button">+ Break-out</button>
+        <p class="hint" id="boAsk" hidden></p>
+        <div id="boTools" hidden>
+          <div class="field"><span class="lbl">Break-out</span><p class="hint" id="boInfo" style="margin:0"></p></div>
+          <div class="row"><button class="btn primary" id="boDraw" type="button">Draw it</button><button class="btn" id="boEdit" type="button">Change who or what</button></div>
+          <div class="row"><button class="btn" id="boFlip" type="button">Flip</button><button class="btn" id="boRemove" type="button">Remove</button></div>
+          <p class="hint">A break-out is a figure drawn by itself and laid over the page, above the panel borders. Drag its top-left dot to move it and its bottom-right dot to resize it.</p>
+        </div>
         <details class="tmpl-box" id="tmplDetails">
           <summary class="btn">Page layouts</summary>
           <div class="field">
@@ -595,6 +633,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
             <div class="segs wrap" id="tmplFilters"></div>
           </div>
           <button class="btn" id="tmplPick" type="button" hidden>Pick the layout by weight</button>
+          <button class="btn" id="tmplSave" type="button" hidden>Save this page's layout as mine</button>
           <p class="hint" id="tmplHint" hidden></p>
           <div class="tmpls" id="tmplGrid"></div>
         </details>
@@ -616,6 +655,11 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
         <div>
           <h2 id="artTitle"></h2>
           <p class="hint" id="artBoard"></p>
+          <div id="toneBox" hidden>
+            <div class="field"><span class="lbl">Screentone <output>the Toner</output></span><p class="hint" id="toneInfo" style="margin:0"></p></div>
+            <div class="row"><button class="btn" id="tonePage" type="button">Tone this page</button><button class="btn" id="toneOne" type="button" hidden>Tone this panel again</button></div>
+            <button class="btn" id="toneHand" type="button" hidden>Scrape or paint back by hand</button>
+          </div>
           <details class="from-book" id="artInart"><summary>Lettering drawn into the picture</summary>
             <div class="field"><label for="artSfx">Sound effect <output>drawn by the Artist, e.g. SLAM</output></label><input type="text" id="artSfx" maxlength="40"></div>
             <div class="field"><label for="artWriting">Writing shown in the picture <output>a sign, a note, a phone screen: exact words</output></label><input type="text" id="artWriting" maxlength="160"></div>
@@ -711,6 +755,44 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   <div class="dlg-head"><h2 id="styleDlgT">Choose an art style</h2><button type="button" class="btn" id="styleDlgX">Close</button></div>
   <p class="hint">Every example shows the same scene, so you can compare. Tap one to choose it.</p>
   <div class="style-grid" id="styleDlgGrid"></div>
+</dialog>
+
+<dialog id="toneDlg" aria-labelledby="toneDlgT">
+  <div class="dlg-head"><h2 id="toneDlgT">Scrape or paint back</h2><button type="button" class="btn" id="toneDlgX">Close</button></div>
+  <div style="display:grid;gap:10px">
+    <div class="segs wrap" id="toneTools">
+      <button type="button" class="seg" data-tool="soft">Soft scrape</button>
+      <button type="button" class="seg" data-tool="hatch">Cross-hatch scrape</button>
+      <button type="button" class="seg" data-tool="back">Paint tone back</button>
+    </div>
+    <div class="field"><label for="toneSize">Brush <output id="toneSizeOut"></output></label><input type="range" id="toneSize" min="20" max="600" step="5" value="110"></div>
+    <div class="tone-stage"><canvas id="toneCanvas"></canvas></div>
+    <p class="hint" id="toneNote" style="margin:0">Draw on the picture. Scraping takes the dots away (the pen lines stay); painting back returns them. Nothing is lost: every stroke can be undone, now or later.</p>
+    <div class="row" style="justify-content:space-between"><span class="row"><button type="button" class="btn" id="toneUndo">Undo stroke</button><button type="button" class="btn" id="toneClear">Take every stroke off</button></span><button type="button" class="btn primary" id="toneSave">Save</button></div>
+  </div>
+</dialog>
+
+<dialog id="exDlg" aria-labelledby="exDlgT">
+  <div class="dlg-head"><h2 id="exDlgT">Export</h2><button type="button" class="btn" id="exDlgX">Close</button></div>
+  <div style="display:grid;gap:14px">
+    <div class="field"><span class="lbl">Format</span>
+      <div class="segs" id="exFormat">
+        <button type="button" class="seg" data-format="pdf">PDF</button>
+        <button type="button" class="seg" data-format="png">PNG</button>
+        <button type="button" class="seg" data-format="jpeg">JPEG</button>
+      </div>
+      <p class="hint" id="exFormatHint" style="margin:0"></p></div>
+    <div class="field"><span class="lbl"><span>Pages</span><output id="exCount"></output></span>
+      <div class="row"><button type="button" class="btn" id="exAll">All pages</button><button type="button" class="btn" id="exNone">None</button></div>
+      <div class="ex-pages" id="exPages"></div></div>
+    <div class="field" id="exSizeRow"><span class="lbl">Picture size</span>
+      <div class="segs" id="exSize">
+        <button type="button" class="seg" data-size="full">Full <small>(2048 × 3072)</small></button>
+        <button type="button" class="seg" data-size="web">Smaller <small>(1365 × 2048)</small></button>
+      </div></div>
+    <label class="check-inline" id="exSetsRow"><input type="checkbox" id="exSets"> Folders of 20 pictures, one folder a post (for X)</label>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" id="exCancel">Cancel</button><button type="button" class="btn primary" id="exGo">Export</button></div>
+  </div>
 </dialog>
 
 <dialog id="sbDlg" aria-labelledby="sbDlgT">

@@ -88,8 +88,13 @@
     let i = 0; const ws = rows.map((r) => r.panels.map(() => weightOf((panels[i++] || {}).board || panels[i - 1] || {})));
     if (new Set([].concat(...ws)).size < 2) return rows; // no panel is heavier than another: the layout keeps its own sizes
     const th = norm(rows.map((r) => r.h || 1)), wh = norm(ws.map((r) => r.reduce((a, b) => a + b, 0)));
-    const hs = floor(th.map((t, k) => (1 - K) * t + K * wh[k]), Math.min(0.14, 0.6 / rows.length));
+    let hs = floor(th.map((t, k) => (1 - K) * t + K * wh[k]), Math.min(0.14, 0.6 / rows.length));
+    if (rows.some((r) => r.strip)) { // a strip of tiny panels keeps its own small height (and even widths) whatever it holds: the other tiers share the rest
+      const kept = rows.reduce((a, r, k) => a + (r.strip ? th[k] : 0), 0), rest = rows.reduce((a, r, k) => a + (r.strip ? 0 : hs[k]), 0) || 1;
+      hs = hs.map((h, k) => (rows[k].strip ? th[k] : h * (1 - kept) / rest));
+    }
     return rows.map((r, k) => {
+      if (r.strip) return Object.assign({}, r, { h: Math.round(hs[k] * 1000) / 1000 });
       const tw = norm(r.panels.map((q) => q.w || 1)), ww = norm(ws[k]), out = floor(tw.map((t, j) => (1 - K) * t + K * ww[j]), Math.min(0.22, 0.7 / r.panels.length));
       return Object.assign({}, r, { h: Math.round(hs[k] * 1000) / 1000, panels: r.panels.map((q, j) => Object.assign({}, q, { w: Math.round(out[j] * 1000) / 1000 })) });
     });
@@ -102,12 +107,31 @@
       if (rated(t, R).n !== n) continue;
       const rows = tune(t.rows, panels), rt = rate(rows, R), m = misfit(panels, rt, opts);
       for (const a of rt.aspect) if (a < 0.42 || a > 3.4) m.score += 0.2; // a sliver
+      { // a strip of tiny panels is for a run of tiny beats (weight 1), and for nothing else
+        const want = strips(panels), key = (s) => s[0] + ":" + s[1]; let i = 0; const has = [];
+        for (const r of t.rows || []) { const k = r.panels.length; if (r.strip) has.push([i, k]); i += k; }
+        if (has.length || want.length) {
+          if (has.length && has.every((s) => want.some((w) => key(w) === key(s)))) m.score -= 0.6;
+          else if (has.length) continue; // its strip would hold a panel that is not a tiny beat: never offered for this page (it can still be applied by hand)
+          else { m.score += 0.3; m.why.push("the run of tiny beats has no strip"); }
+        }
+      }
       if (seen.has(rt.shape + JSON.stringify(rows.map((r) => [r.slant || 0, r.panels.map((q) => q.slant || 0)])))) continue; // the same layout under another code
       seen.add(rt.shape + JSON.stringify(rows.map((r) => [r.slant || 0, r.panels.map((q) => q.slant || 0)])));
       out.push({ template: t, rows, rating: rt, score: m.score, why: m.why });
     }
     return out.sort((a, b) => a.score - b.score);
   }
+  /** Runs of 3 to 5 tiny beats in a row (weight 1): each can be a strip of very small panels. -> [[first index, how many]] */
+  function strips(panels) {
+    const out = []; let s = -1;
+    const end = (e) => { if (s >= 0 && e - s >= 3 && e - s <= 5) out.push([s, e - s]); s = -1; };
+    (panels || []).forEach((q, i) => { if (weightOf(q.board || q) === 1) { if (s < 0) s = i; } else end(i); });
+    end((panels || []).length);
+    return out;
+  }
+  /** How many panels a page counts as for the reader: a strip of tiny panels reads as one. */
+  function counted(panels) { return (panels || []).length - strips(panels).reduce((a, s) => a + s[1] - 1, 0); }
   function pick(panels, templates, R, opts) { return sorted(panels, templates, R, opts)[0] || null; }
 
   /** Plain tiers by weight, for a panel count no template has: heavy panels get a tier of their own, light ones share. */
@@ -126,12 +150,12 @@
     const best = pick(panels, templates, R, opts);
     if (!best) return { rows: tiers(panels), code: "tiers", score: null, why: ["no ready-made layout has " + panels.length + " panels"] };
     let i = 0;
-    const build = (rows) => rows.map((r) => Object.assign({ h: r.h }, r.slant ? { slant: r.slant } : {}, { panels: r.panels.map((q) => {
+    const build = (rows) => rows.map((r) => Object.assign({ h: r.h }, r.slant ? { slant: r.slant } : {}, r.strip ? { strip: true } : {}, { panels: r.panels.map((q) => {
       if (q.rows) return Object.assign({ w: q.w }, q.slant ? { slant: q.slant } : {}, { rows: build(q.rows) });
-      const o = Object.assign({}, panels[i++], { w: q.w }); if (q.slant) o.slant = q.slant; else delete o.slant; return o; }) }));
+      const o = Object.assign({}, panels[i++], { w: q.w }); if (q.slant) o.slant = q.slant; else delete o.slant; if (q.shape) o.shape = q.shape; else delete o.shape; return o; }) }));
     return { rows: build(best.rows), code: best.template.code, score: best.score, why: best.why };
   }
 
-  const api = { JOBS, jobOf, weightOf, rate, misfit, tune, sorted, pick, layout, tiers, shape, leaves, area };
+  const api = { JOBS, jobOf, weightOf, rate, misfit, tune, sorted, strips, counted, pick, layout, tiers, shape, leaves, area };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else g.Director = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -33,6 +33,21 @@ async function list(saved) {
   return out.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
 }
 
+/** A picture that came back in another shape than the one asked for is cut to that shape, from the middle (nothing is stretched).
+ * Returns "1536x1024 to 1024x1024" when it cut, "" when the shape was right or the file could not be read. */
+export async function fitShape(file, aspect) {
+  const want = ASPECTS[aspect]; if (!want) return "";
+  const py = `import sys
+from PIL import Image
+f, tw, th = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+im = Image.open(f); w, h = im.size; r = tw / th
+if abs(w / h - r) / r < 0.02: sys.exit(0)
+nw, nh = (round(h * r), h) if w / h > r else (w, round(w / r))
+x, y = (w - nw) // 2, (h - nh) // 2
+im.crop((x, y, x + nw, y + nh)).save(f)
+print(f"{w}x{h} to {nw}x{nh}")`;
+  return new Promise((ok) => execFile("/usr/bin/python3", ["-c", py, file, String(want[0]), String(want[1])], { timeout: 60000 }, (e, out) => ok(e ? "" : String(out).trim())));
+}
 // Codex's image tool takes three sizes; each shape goes to the nearest one.
 const CODEX_SIZE = { "1:1": "1024 x 1024", "2:3": "1024 x 1536", "9:16": "1024 x 1536", "3:2": "1536 x 1024", "16:9": "1536 x 1024" };
 const codexRun = (dir, prompt, minutes = 12) => runCodex(dir, prompt, { minutes });
@@ -54,9 +69,10 @@ export async function runCreate(saved, job) {
         await upd({ msg: "Drawing with Codex (about 2 to 4 minutes)" });
         await codexRun(DIR(saved), `Read the task file ${task} and follow it exactly: one picture made with your built-in image generation tool, saved at the Save as path. Then stop.`);
         if (!existsSync(out)) throw new Error("Codex finished without saving the picture. Try again, or pick another model.");
+        const cut = await fitShape(out, m.aspect); // Codex draws in three sizes only and sometimes not the one asked for
         await rm(task, { force: true }); await rm(said, { force: true });
         await logSpend(saved, { project: "Create", what: "picture", kind: "picture", service: "codex", model: "codex", usd: 0, est: 0 });
-        job.cost = 0; await upd({ status: "done", msg: "", file: m.id + ".png", service: "codex", model: "codex", cost: 0, estimated: false });
+        job.cost = 0; await upd({ status: "done", msg: "", file: m.id + ".png", service: "codex", model: "codex", cost: 0, estimated: false, ...(cut ? { cropped: cut } : {}) });
         return;
       }
       const refs = (m.refs || []).map((id) => existsSync(join(DIR(saved), id)) ? join(DIR(saved), id) : "").filter(Boolean);

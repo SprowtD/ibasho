@@ -35,7 +35,7 @@ export async function startApp(copy = copyApp(), opts = {}) {
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i++) { try { const r = await fetch(base + "/api/ping"); if (r.ok) break; } catch { /* not yet */ } await new Promise((r) => setTimeout(r, 100)); }
   return { ...copy, base, port, child, out: () => out,
-    stop: async () => { child.kill(); await new Promise((r) => child.once("exit", r)); if (!process.env.KEEP_TEST) rmSync(copy.scratch, { recursive: true, force: true }); } };
+    stop: async () => { child.kill(); await new Promise((r) => child.once("exit", r)); if (!process.env.KEEP_TEST) rmSync(copy.scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } }; // a helper the app started may still be writing for a moment
 }
 
 /** Every call the fake codex received: [{ argv, cwd }]. */

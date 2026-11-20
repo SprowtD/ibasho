@@ -209,7 +209,7 @@ async function pagePng(ch, page, width = 2048) {
   let css = "";
   for (const k of used) { const [fam, file, wt] = FONT_FILES[k]; css += `@font-face{font-family:'${fam}';src:url(${await dataUrl("/fonts/" + file, "font/ttf")});font-weight:${wt};}`; }
   let art;
-  if (page.layout) { const map = {}; for (const q of panelsOf(page)) if (q.image && !map[q.image]) map[q.image] = await dataUrl("/" + ch.meta.dir + q.image, mimeOf(q.image)); art = R.layoutSvg(page, (s) => map[s], sizesOf(ch.spec)); }
+  if (page.layout) { const map = {}; for (const src of R.pictures(page)) if (!map[src]) map[src] = await dataUrl("/" + ch.meta.dir + src, mimeOf(src)); art = R.layoutSvg(page, (s) => map[s], sizesOf(ch.spec)); }
   else art = `<image href="${await dataUrl("/" + ch.meta.dir + page.art, mimeOf(page.art))}" x="0" y="0" width="${R.W}" height="${R.H}" preserveAspectRatio="none"/>`;
   const h = Math.round((width * R.H) / R.W);
   const html = `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:#fff}svg{display:block}${css}</style><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${R.W} ${R.H}" width="${width}" height="${h}">${art}${R.letteringSvg(measured)}${R.pageNumberSvg(page)}</svg>`;
@@ -368,7 +368,7 @@ tool("split_page", "Spread a crowded page over two: the panels after `after_pane
     const np = { id: "board-" + newId(), number: p.number, label: (p.label || "Page") + " (second half)", note: p.note || "", layout: { ...(p.layout.rtl ? { rtl: true } : {}), rows: stack(second) }, text: (p.text || []).filter((it) => ids.has(it.panel)) };
     p.layout = { ...(p.layout.rtl ? { rtl: true } : {}), rows: stack(first) }; p.text = (p.text || []).filter((it) => !ids.has(it.panel)); delete p.plan;
     const i = ch.spec.pages.indexOf(p); ch.spec.pages.splice(i + 1, 0, np);
-    ch.spec.pages.forEach((q, n) => { if (!q.cover) { q.number = n + 1; if (/^Page \d+$/.test(q.label || "")) q.label = "Page " + (n + 1); } });
+    { let n = 0; for (const q of ch.spec.pages) if (!q.cover) { n++; q.number = n; if (/^Page \d+$/.test(q.label || "")) q.label = "Page " + n; } } // the cover is not counted
     for (const q of [p, np]) if (R.planFor(q).length) q.text = R.autoPlace(q, ch.spec, libOf(ch.spec), measureText);
     await saveChapter(ch); return { first: { id: p.id, panels: first.map((q) => q.id) }, second: { id: np.id, panels: second.map((q) => q.id) }, pages_now: ch.spec.pages.length, next: "Both halves are stacked one panel a row and lettered again. Give each a real layout with set_layout or apply_template, then view_page. A chapter is at most 20 pages (X takes 20 pictures a post)." };
   });
@@ -461,7 +461,7 @@ tool("letter_pages", "The Letterer: place every balloon on the given pages (or t
     await saveChapter(ch); return { lettered: out, next: "view_page to look; edit_balloons to move or change one; check_pages for the faults." };
   });
 tool("edit_balloons", "Change, add or delete balloons on one page. Positions are fractions of the page (0..1). kind: speech | shout | whisper | thought | caption | ambient | crowd | phone | title. font: playpen | bangers | vollkorn | patrick | comicneue | kalam.",
-  { project: PROJECT, page: {}, set: { ...A(O), description: "[{index, ...fields}] fields: text, speaker, kind, at:[x,y], tail:[x,y], width, size, font, rotate, bleed" }, add: { ...A(O), description: "[{kind, speaker, text, at:[x,y], tail?, width?}]" }, delete: A(N) }, ["project", "page"],
+  { project: PROJECT, page: {}, set: { ...A(O), description: "[{index, ...fields}] fields: text, speaker, kind (sfx = a sound effect: huge letters, no balloon), at:[x,y], tail:[x,y], width, size (a sound effect goes up to 4), font, rotate, bleed, bridge (the balloon sits on the border to the next panel), hollow (sound effect: white letters, dark edge)" }, add: { ...A(O), description: "[{kind, speaker, text, at:[x,y], tail?, width?}]" }, delete: A(N) }, ["project", "page"],
   async (a) => {
     const ch = await loadChapter(a.project), p = pageOf(ch, a.page); p.text = p.text || [];
     const place = (it) => { if (!p.layout || it.free) return; const c = R.allPanels(p.layout).reverse().find((q) => { const [x0, y0, x1, y1] = q.bbox; return it.at[0] * R.W >= x0 && it.at[0] * R.W <= x1 && it.at[1] * R.H >= y0 && it.at[1] * R.H <= y1; }); if (c) it.panel = c.panel.id; else delete it.panel; };
@@ -478,13 +478,14 @@ tool("check_pages", "The page check and the Paneler's check: words that do not f
 tool("view_page", "Look at a page as it stands now (art, borders, balloons): returns the picture. Use it after every change you want to judge by eye.", { project: PROJECT, page: {}, width: { ...N, description: "Pixels wide, 400 to 1400 (default 800)" } }, ["project", "page"],
   async (a) => { const ch = await loadChapter(a.project), p = pageOf(ch, a.page), png = await pagePng(ch, p, Math.round(Math.min(1400, Math.max(400, a.width || 800))));
     return { content: [{ type: "image", data: png.toString("base64"), mimeType: "image/png" }, { type: "text", text: `${ch.id}, ${p.label || p.id}: ${panelsOf(p).filter((q) => q.image).length} of ${panelsOf(p).length} panels drawn, ${(p.text || []).length} balloons.` }] }; });
-tool("export_pages", "Export finished pages as 2048 x 3072 PNGs, the same as the Export button. With no pages, the whole chapter is exported afresh (the last chapter export is replaced). Files can then be fetched: /api/export-zip?p=, or /api/export-x?p= for JPEGs in sets of 20 for X.",
+tool("export_pages", "Export finished pages as 2048 x 3072 PNGs, the same as the Export button. With no pages, the whole chapter is exported afresh (the last chapter export is replaced). The answer gives addresses for the exported pages as one file: a PDF, a zip of PNGs, a zip of JPEGs, and JPEGs in folders of 20 for X.",
   { project: PROJECT, pages: A({}) }, ["project"],
   async (a) => {
     const ch = await loadChapter(a.project), whole = !a.pages?.length, list = whichPages(ch, a.pages), out = [];
     if (whole) await api("DELETE", "/api/exports?p=" + enc(a.project));
     for (const p of list) { const name = `page-${String(ch.spec.pages.indexOf(p) + 1).padStart(2, "0")}.png`; await api("POST", `/api/export?p=${enc(a.project)}&name=${name}`, { raw: await pagePng(ch, p, 2048), type: "image/png" }); out.push(`${BASE}/exports/${a.project}/${name}`); }
-    return { exported: out, zip: `${BASE}/api/export-zip?p=${a.project}`, for_x: `${BASE}/api/export-x?p=${a.project}` };
+    const file = (more) => `${BASE}/api/export-file?p=${enc(a.project)}&${more}${ch.spec.reading === "rtl" ? "&rtl=1" : ""}`;
+    return { exported: out, pdf: file("format=pdf"), png_zip: file("format=png"), jpeg_zip: file("format=jpeg"), for_x: file("format=jpeg&size=web&sets=20") };
   });
 
 // ----- manga: the series (style, cast, sheets)

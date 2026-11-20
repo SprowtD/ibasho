@@ -115,6 +115,56 @@ def main():
     ok(any(ly["name"].startswith("panel 5, noise grey") for ly in doc3["layers"]), "noise tone can be asked for: %s" % [ly["name"] for ly in doc3["layers"]][:2])
     n20 = toner._arr(Image.open(tmp / "panel-n" / "tone-20.png")).mean()
     ok(abs(n20 - 0.20) < 0.02, "and is the right density (%.3f)" % n20)
+    # ---- page mode reads the page as the person last saved it (a dragged gutter), not only the built spec
+    proj = tmp / "proj"; proj.mkdir()
+    layout = lambda w1: {"rows": [{"h": 1, "panels": [{"id": "a", "w": w1}, {"id": "b", "w": 1 - w1}]}]}
+    (proj / "spec.json").write_text(json.dumps({"boardAt": "t1", "pages": [{"id": "p1", "number": 1, "layout": layout(0.5)}]}))
+    saved = tmp / "saved.json"; saved.write_text(json.dumps({"boardAt": "t1", "pages": [{"id": "p1", "number": 1, "layout": layout(0.25)}]}))
+    built, _ = toner.page_geometry(proj, 1, saved="")
+    mine, _ = toner.page_geometry(proj, 1, saved=saved)
+    wide = lambda cells, i: cells[i]["box"][2] - cells[i]["box"][0]
+    ok(built[0]["from"] == "built" and abs(wide(built, 0) - wide(built, 1)) < 8, "with no saved copy the built page is used: %s" % [c["box"] for c in built])
+    ok(mine[0]["from"] == "saved" and wide(mine, 1) > wide(mine, 0) * 2, "a dragged gutter in the saved copy moves the panel boxes: %s" % [c["box"] for c in mine])
+    saved.write_text(json.dumps({"boardAt": "older", "pages": [{"id": "p1", "number": 1, "layout": layout(0.25)}]}))
+    ok(toner.page_geometry(proj, 1, saved=saved)[0][0]["from"] == "built", "a saved copy of an older storyboard is not used")
+    # ---- the hand: a soft scrape, a cross-hatch scrape, painting back. The masks are never changed; every stroke can be undone.
+    d = tmp / "panel"; base = toner._arr(toner.flatten_panel(d)[0]); masks0 = {p.name: p.read_bytes() for p in d.glob("mask-*.png")}
+    wall = reg(90, 150, 340, 380); P = lambda x, y: [x * sx, y * sy]; SZ = [w, h]  # inside the 20% wall; strokes are in the panel's own pixels
+    ok(0.12 < 1 - base[wall].mean() < 0.3, "before scraping, the wall carries its tone (%.3f ink)" % (1 - base[wall].mean()))
+    r1 = toner.set_strokes(d, {"size": SZ, "strokes": [{"tool": "soft", "size": 120 * sx, "points": [P(120, 200), P(320, 330)]}]})
+    soft = toner._arr(Image.open(d / r1["flat"]))
+    ok(r1["strokes"] == 1 and r1["flat"] == "flat-1.png" and (d / "flat-1.png").exists(), "a stroke is kept with the panel and a new flat picture is written: %s" % r1)
+    mid = reg(200, 240, 240, 290)
+    ok((1 - soft[mid].mean()) < (1 - base[mid].mean()) * 0.35, "a soft scrape takes the dots off under the brush (%.3f -> %.3f); pen lines stay" % (1 - base[mid].mean(), 1 - soft[mid].mean()))
+    far = reg(480, 60, 720, 100)
+    ok(np.array_equal(soft[far], base[far]), "and nothing changes away from the brush")
+    ok(all((d / n).read_bytes() == b for n, b in masks0.items()), "the masks themselves are untouched: the scrape is laid over them")
+    hair = reg(540, 170, 660, 270)  # inside the 40% hair
+    r2 = toner.set_strokes(d, {"size": SZ, "strokes": [{"tool": "hatch", "size": 140 * sx, "points": [P(540, 220), P(660, 220)]}]})
+    hat = toner._arr(Image.open(d / r2["flat"]))
+    ink0, ink1 = 1 - base[hair].mean(), 1 - hat[hair].mean()
+    ok(ink1 < ink0 * 0.75 and ink1 > ink0 * 0.2, "a cross-hatch scrape cuts white lines through the tone and leaves tone between them (%.3f -> %.3f)" % (ink0, ink1))
+    ok(r2["flat"] == "flat-2.png" and not (d / "flat-1.png").exists(), "each flat picture has a new name, and the old one is cleared away")
+    r3 = toner.set_strokes(d, {"size": SZ, "strokes": [{"tool": "soft", "size": 120 * sx, "points": [P(120, 200), P(320, 330)]}, {"tool": "back", "size": 200 * sx, "points": [P(120, 200), P(320, 330)]}]})
+    back = toner._arr(Image.open(d / r3["flat"]))
+    ok(np.abs(back[mid] - base[mid]).max() < 0.02, "painting back over a scrape brings the tone back as it was")
+    r4 = toner.set_strokes(d, {"strokes": []})
+    ok(np.array_equal(np.asarray(Image.open(d / r4["flat"])), np.uint8(np.clip(base * 255 + 0.5, 0, 255))), "with every stroke undone the panel is exactly as the Toner made it")
+    junk = toner.clean_strokes({"size": [450, 320], "strokes": [{"tool": "erase-everything", "points": [[1, 1]]}, {"tool": "soft", "size": 99999, "points": [[10, 10], "x", [20, 20]]}, "no"]}, [900, 640])
+    ok(len(junk["strokes"]) == 1 and junk["strokes"][0]["points"] == [[20.0, 20.0], [40.0, 40.0]] and junk["strokes"][0]["size"] <= 600, "strokes are cleaned, and scaled when the panel has changed size: %s" % junk)
+    # ---- the app's page mode: one folder a panel by its id, each with its flat picture; one panel can be toned again alone
+    Image.open(src).save(proj / "a.png"); Image.open(src).save(proj / "b.png")
+    pg = {"id": "page-x", "layout": {"rows": [{"h": 1, "panels": [{"id": "a", "w": 1, "image": "a.png"}]}, {"h": 1, "panels": [{"id": "b", "w": 1, "image": "b.png", "focus": [0.3, 0.5]}, {"id": "c", "w": 1}]}]}}
+    (proj / "spec.json").write_text(json.dumps({"boardAt": "t2", "pages": [{"id": "p1", "number": 1, "layout": layout(0.5)}]}))
+    saved.write_text(json.dumps({"boardAt": "t2", "pages": [{"id": "p1", "number": 1, "layout": layout(0.5)}, pg]}))  # a page made in the editor: only in the saved copy
+    outp = tmp / "tone-page"; res = toner.tone_page(proj, "page-x", outp, saved, by_id=True)
+    ok([r["id"] for r in res] == ["a", "b"] and all((outp / r["dir"] / r["flat"]).exists() and r["px"] == 2048 and len(r["box"]) == 4 for r in res), "a page that exists only in the saved copy is toned by its id, one folder a drawn panel: %s" % [(r["id"], r["dir"], r["flat"], r["box"]) for r in res])
+    fa = Image.open(outp / "a" / res[0]["flat"]); ok(fa.size == (res[0]["box"][2] - res[0]["box"][0], res[0]["box"][3] - res[0]["box"][1]), "the flat picture is the panel at its final size: %s" % (fa.size,))
+    toner.set_strokes(outp / "a", {"size": list(fa.size), "strokes": [{"tool": "soft", "size": 80, "points": [[100, 100], [300, 300]]}]})
+    again = toner.tone_page(proj, "page-x", outp, saved, by_id=True, only="b")
+    ok([r["id"] for r in again] == ["a", "b"] and again[0]["flat"] == res[0]["flat"] and again[1]["flat"] != res[1]["flat"], "toning one panel again leaves the other as it was")
+    whole = toner.tone_page(proj, "page-x", outp, saved, by_id=True)
+    ok(whole[0]["strokes"] == 1, "toning the page again keeps what was scraped by hand")
     print(("FAILED" if failed else "ok") + "  toner, first part: %d passed" % passed + (", %d failed" % failed if failed else ""))
     if keep:
         print("  pictures kept in", tmp)

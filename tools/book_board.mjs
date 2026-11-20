@@ -82,14 +82,14 @@ function check(sec, script, board) {
   const used = new Set(); for (const pg of board.pages || []) (function w(rows) { for (const r of rows || []) for (const q of r.panels || []) { if (q.rows) w(q.rows); else for (const l of q.lines || []) used.add(l.id); } })(rowsOf(pg));
   const text2 = new Map(lines.map((l) => [l.id, l.text]));
   (board.pages || []).forEach((pg, n) => { // the page limits every storyboard keeps
-    let panels = 0, words = 0; const said = new Set();
-    (function w(rows) { for (const r of rows || []) for (const q of r.panels || []) { if (q.rows) { w(q.rows); continue; } panels++; if ((q.lines || []).length > 3) faults.push(`Page ${n + 1}: a panel has ${(q.lines || []).length} balloons (at most 3). Add a panel.`);
+    let panels = 0, words = 0, tiny = 0, all = 0; const said = new Set(), strip = () => { if (tiny >= 3 && tiny <= 5) panels -= tiny - 1; tiny = 0; }; // a strip of 3 to 5 tiny panels (weight 1) reads as one
+    (function w(rows) { for (const r of rows || []) for (const q of r.panels || []) { if (q.rows) { w(q.rows); continue; } panels++; all++; if (+q.weight === 1) tiny++; else strip(); if ((q.lines || []).length > 3) faults.push(`Page ${n + 1}: a panel has ${(q.lines || []).length} balloons (at most 3). Add a panel.`);
       for (const l of q.lines || []) { if (l.kind === "title" || !text2.has(l.id)) continue; said.add(l.id); words += count(text2.get(l.id)); } } })(rowsOf(pg));
-    if (panels > 6) faults.push(`Page ${n + 1} has ${panels} panels (the limit is 6). Move beats to a new page.`);
+    strip();
+    if (panels > 6 || all > 8) faults.push(`Page ${n + 1} has ${all} panels (the limit is 6, a strip of tiny panels counting as one; 8 at the very most). Move beats to a new page.`);
     if (said.size > 5) faults.push(`Page ${n + 1} has ${said.size} spoken lines (the limit is 5). Move beats to a new page.`);
     if (words > 70) faults.push(`Page ${n + 1} has ${words} lettered words (the limit is 70). Move beats to a new page.`);
   });
-  if ((board.pages || []).length > 20) faults.push(`The chapter has ${(board.pages || []).length} pages (the limit is 20: X takes 20 pictures a post). Fit it into 20 pages: fuller pages within the page limits, fewer separate beats.`);
   for (const l of lines) if (!used.has(l.id)) faults.push(`Line ${l.id} is in script.json but on no page.`);
   return faults;
 }

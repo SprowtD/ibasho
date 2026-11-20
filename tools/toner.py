@@ -15,6 +15,12 @@ No model is used and nothing is paid for. Needs Pillow and numpy (the app alread
 
   toner.py panel  <picture> <out dir> [--box x0,y0,x1,y1] [--name "panel 2"]   one panel picture -> layers
   toner.py page   <project dir> <page number> <out dir>                        every drawn panel of a page -> layers + the flat page
+                  [--saved <file>]   the page as the person last saved it is used by itself (page-editor/saved/<project>.json);
+                                     name another saved file here, or "" for the built page only
+                  [--by-id]          one folder a panel named by the panel's id (what the app uses), each with its flat-<n>.png
+                  [--only <panel id>] tone that one panel again and leave the others as they are
+                  the page is named by its number, or by its id (a page made in the editor has no number in the built file)
+  toner.py strokes <panel layer dir> <strokes.json>                            scraping and painting back, done by hand -> a new flat picture
   toner.py flatten <layer dir> <out.png>                                       layers -> one picture (what the export will do)
   toner.py check  <picture or layer dir>                                       dots already drawn into a picture? layers on one line count?
 
@@ -26,15 +32,20 @@ Layers written for a panel (layers.json lists them, named the way a manga artist
   lines.png                  the line art, black on clear
   tone-20.png + mask-20.png  "panel 2, dots 60 lines 20%": the tone over the WHOLE panel, and the mask that shows it
   tone-gradient.png + mask-gradient.png   "panel 2, gradient 60 lines": dots that grow with the grey of a shaded area
+  strokes.json               what the person scraped away or painted back by hand: {"size": [w, h], "strokes": [{"tool", "size", "points"}]}
+                             tool = soft (a soft scrape) | hatch (a cross-hatch scrape) | back (paint the tone back).
+                             The masks are never changed by it: the strokes are laid over them at flatten time, so every one can be undone,
+                             and "Tone again" keeps them.
 """
 import json
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 APP = Path(__file__).resolve().parent.parent
 DEFAULTS = {"lines": 60, "angle": 45, "page_inches": 5.83, "page_px": 2048}
@@ -148,29 +159,66 @@ def tone_panel(picture, out, box=None, name="panel", st=None, focus=(0.5, 0.5), 
     box = tuple(int(round(v)) for v in box); w, h = box[2] - box[0], box[3] - box[1]
     L = _arr(fit(picture, w, h, focus, zoom))
     r = max(2, round(0.0035 * st["page_px"]))
-    # The tone UNDER the pen: pen lines and small black shapes (anything thinner than about 2r pixels) are lifted off, which
-    # leaves the flat grey they were drawn over. So hatching across a grey wall stays one grey wall, and tone runs under lines.
-    under = _arr(_img(L).filter(ImageFilter.MaxFilter(2 * r + 1)).filter(ImageFilter.MinFilter(2 * r + 1)))
+    # The tone UNDER the pen. Only INK is lifted off (dark pen lines and their soft edge, thinner than about 2r pixels), which
+    # leaves the flat grey it was drawn over: hatching across a grey wall stays one grey wall, and tone runs under lines.
+    # A small or thin GREY shape (a ripple on water, a fold's shadow, a strand of hair) is not ink: it stays, and gets its dots.
+    # (Until 19 Nov 2026 everything thin was lifted off, grey or black. On a real picture the ripples then stayed flat grey
+    # beside the dots, and toned areas had blocky edges.)
+    pen = _grow(L < 0.34, 2)
+    closed = _arr(_img(L).filter(ImageFilter.MaxFilter(2 * r + 1)).filter(ImageFilter.MinFilter(2 * r + 1)))
+    under = np.where(pen, closed, L)
     soft = _arr(_img(under).filter(ImageFilter.GaussianBlur(1.6)))
-    grey = _open((soft > BLACK + 0.03) & (soft < WHITE), r)
-    grey = _arr(_img(grey.astype(np.float32)).filter(ImageFilter.MinFilter(5))) > 0.5  # pulled in 2 px: the blur spreads a grey edge, and tone must not peep out past its outline
+    raw = (soft > BLACK + 0.03) & (soft < WHITE)
+    blur = lambda m, px: _arr(_img(m.astype(np.float32)).filter(ImageFilter.GaussianBlur(px)))
+    # a hairline of grey (the soft edge of solid black) is not tone: opened with a ROUND brush, so edges stay smooth, then
+    # pulled in a little: the blur above spreads a grey edge, and tone must not peep out past its outline
+    grey = (blur(blur(raw, 2.0) > 0.9, 2.0) > 0.1) & raw
+    grey = (blur(grey, 1.2) > 0.82) & grey
     dens = 1 - soft
     solid = _grow(under < BLACK, 2)  # solid black: tone tucks a little way under its edge, so no white hairline shows
     levels = np.array(LEVELS, dtype=np.float32) / 100
     # every separate grey area is one tone: FLAT (one of the chapter's levels) or SHADED (a gradient), by how far its grey ranges
     labels, count = _areas(grey)
     flat = {pct: np.zeros_like(grey) for pct in LEVELS}; shaded = np.zeros_like(grey)
-    for k in range(1, count + 1):
-        a = labels == k
-        if a.mean() < 0.002:
-            continue
-        core = _arr(_img(a.astype(np.float32)).filter(ImageFilter.MinFilter(2 * r + 1))) > 0.5  # away from its edges, where the neighbour bleeds in
-        vals = dens[core] if core.sum() > 50 else dens[a]
-        lo, hi = np.percentile(vals, [5, 95])
-        if hi - lo > 0.07:
-            shaded |= a
-        else:
-            flat[LEVELS[int(np.abs(levels - np.median(vals)).argmin())]] |= a
+    try:
+        from scipy import ndimage
+    except Exception:
+        ndimage = None
+    if ndimage is not None and count:
+        idx = np.arange(1, count + 1)
+        size = ndimage.sum(grey, labels, idx)
+        core = (blur(grey, float(r)) > 0.9) & grey  # well away from its edges, where the outline and the neighbour bleed in
+        csize = ndimage.sum(core, labels, idx); cl = np.where(core, labels, 0)
+        use_core = csize > 50
+        with np.errstate(invalid="ignore", divide="ignore"):  # an area with no core has no core figures: its whole-area ones are used
+            med = np.where(use_core, ndimage.median(dens, cl, idx), ndimage.median(dens, labels, idx))
+        # which layer each area goes to: 0 none (a speck), 1..n a flat level, -1 the gradient
+        to = np.zeros(count + 1, dtype=np.int32)
+        for k in range(count):
+            if size[k] < 30:
+                continue
+            to[k + 1] = int(np.abs(levels - med[k]).argmin()) + 1
+            if size[k] > 0.002 * grey.size:  # only an area of some size can be a shade from light to dark: measured the careful way
+                vals = dens[cl == k + 1] if use_core[k] else dens[labels == k + 1]
+                lo, hi = np.percentile(vals, [5, 95])
+                if hi - lo > 0.07:
+                    to[k + 1] = -1
+        where = to[labels]
+        shaded = where == -1
+        for i, pct in enumerate(LEVELS):
+            flat[pct] = where == i + 1
+    else:  # no scipy on this computer: one area at a time, and the very small ones are left alone
+        for k in range(1, count + 1):
+            a = labels == k
+            if a.mean() < 0.002:
+                continue
+            core = _arr(_img(a.astype(np.float32)).filter(ImageFilter.MinFilter(2 * r + 1))) > 0.5
+            vals = dens[core] if core.sum() > 50 else dens[a]
+            lo, hi = np.percentile(vals, [5, 95])
+            if hi - lo > 0.07:
+                shaded |= a
+            else:
+                flat[LEVELS[int(np.abs(levels - np.median(vals)).argmin())]] |= a
     layers = []
     for pct in LEVELS:
         m = flat[pct]
@@ -198,14 +246,81 @@ def tone_panel(picture, out, box=None, name="panel", st=None, focus=(0.5, 0.5), 
     return doc
 
 
+TOOLS = ("soft", "hatch", "back")
+
+
+def clean_strokes(doc, size=None):
+    """Strokes as the tool keeps them: known tools, sane sizes, points inside the panel; scaled when the panel has changed size."""
+    doc = doc if isinstance(doc, dict) else {"strokes": doc}
+    was = doc.get("size") or size; out = []
+    kx, ky = (size[0] / was[0], size[1] / was[1]) if size and was and was[0] and was[1] else (1.0, 1.0)
+    for s in (doc.get("strokes") or [])[:400]:
+        if not isinstance(s, dict) or s.get("tool") not in TOOLS:
+            continue
+        pts = [[round(float(p[0]) * kx, 1), round(float(p[1]) * ky, 1)] for p in (s.get("points") or [])[:2000] if isinstance(p, (list, tuple)) and len(p) == 2]
+        if pts:
+            out.append({"tool": s["tool"], "size": max(4.0, min(600.0, float(s.get("size") or 40) * (kx + ky) / 2)), "points": pts})
+    return {"size": list(size or was or [0, 0]), "strokes": out}
+
+
+def scrape_field(size, strokes):
+    """How much tone the hand has taken away at each pixel, 0..1, from the strokes in the order they were made.
+    A soft scrape has a feathered edge. A cross-hatch scrape cuts crossing white lines, the way a blade drawn two ways over
+    tone does. Painting back puts the tone back under the brush (it undoes scraping; it cannot add tone where there was none)."""
+    w, h = size; S = np.zeros((h, w), dtype=np.float32); grid = None
+    for s in strokes:
+        width = int(round(s["size"])); m = Image.new("L", (w, h), 0); d = ImageDraw.Draw(m); pts = [tuple(p) for p in s["points"]]
+        if len(pts) > 1:
+            d.line(pts, fill=255, width=width, joint="curve")
+        for x, y in (pts[0], pts[-1]):
+            d.ellipse([x - width / 2, y - width / 2, x + width / 2, y + width / 2], fill=255)
+        if s["tool"] == "hatch":
+            if grid is None:
+                grid = np.mgrid[0:h, 0:w].astype(np.float32)
+            p = min(30.0, max(14.0, width / 12.0)); t = p * 0.38; ys, xs = grid  # fine lines whatever the brush: a blade's cuts, not a lattice
+            cut = (((xs + ys * 0.55) % p) < t) | (((xs * 0.55 - ys) % p) < t)  # two sets of lines that cross at an angle, not a square grid
+            S = np.maximum(S, _arr(m) * cut)
+        else:
+            if s["tool"] == "soft":
+                S = np.maximum(S, _arr(m.filter(ImageFilter.GaussianBlur(max(1.0, width * 0.22)))))  # a feathered edge
+            else:
+                S = S * (1 - _arr(m.filter(ImageFilter.GaussianBlur(max(1.0, width * 0.06)))))  # painting back is firm: under the brush the tone is whole again
+    return S
+
+
 def flatten_panel(layer_dir):
-    """Lines over tones through their masks, on white: what the export will do. A mask painted black takes tone away; nothing is lost."""
+    """Lines over tones through their masks, on white: what the export will do. A mask painted black takes tone away; nothing is lost.
+    What the person scraped or painted back by hand (strokes.json) is laid over the masks here, and can always be undone."""
     d = Path(layer_dir); doc = json.loads((d / "layers.json").read_text())
     w, h = doc["size"]; ink = np.zeros((h, w), dtype=np.float32)
     for ly in doc["layers"]:
         ink = np.maximum(ink, _arr(Image.open(d / ly["tone"])) * _arr(Image.open(d / ly["mask"]).convert("L")))
+    if (d / "strokes.json").exists():
+        st = clean_strokes(json.loads((d / "strokes.json").read_text()), [w, h])
+        if st["strokes"]:
+            ink = ink * (1 - scrape_field((w, h), st["strokes"]))
     ink = np.maximum(ink, _arr(Image.open(d / doc["lines_file"]).getchannel("A")))
     return _img(1 - ink), doc
+
+
+def write_flat(layer_dir):
+    """The panel flattened into flat-<n>.png, a new number each time (so a screen never shows an old one). -> the file's name"""
+    d = Path(layer_dir); n = 0
+    for p in d.glob("flat-*.png"):
+        try:
+            n = max(n, int(p.stem.split("-")[1]))
+        except ValueError:
+            pass
+        p.unlink()
+    name = f"flat-{n + 1}.png"; flatten_panel(d)[0].save(d / name); return name
+
+
+def set_strokes(layer_dir, doc):
+    """Keep the hand's strokes with the panel and flatten it again. -> {"flat", "strokes"}"""
+    d = Path(layer_dir); size = json.loads((d / "layers.json").read_text())["size"]
+    st = clean_strokes(doc, size)
+    (d / "strokes.json").write_text(json.dumps(st))
+    return {"flat": write_flat(d), "strokes": len(st["strokes"])}
 
 
 def baked_dots(picture):
@@ -255,30 +370,59 @@ def check_layers(layer_dir):
     return {"panels": len(docs), "layers": sum(len(d["layers"]) for d in docs), "line_counts": sorted({s[0] for s in seen}), "angles": sorted({s[1] for s in seen}), "ok": len(seen) <= 1}
 
 
-def page_geometry(project, number):
-    """The drawn panels of a page with their boxes at the final size, from the app's own page geometry."""
+def saved_copy(project):
+    """Where the app keeps the person's saved edits of this chapter (gutters dragged, a template applied, pan and zoom)."""
+    root = Path(os.environ.get("STUDIO_SAVED") or APP / "page-editor/saved")
+    return root / (Path(project).resolve().name + ".json")
+
+
+def page_geometry(project, number, saved=None):
+    """The drawn panels of a page with their boxes at the final size, from the app's own page geometry.
+    The page is taken as the person last saved it when there is a saved copy of this same storyboard (the built
+    spec.json does not have their layout edits); `saved` names another saved file, or "" for the built page only."""
     js = """
 require(process.argv[1]); const R=globalThis.PageRender, fs=require('fs');
-const spec=JSON.parse(fs.readFileSync(process.argv[2],'utf8')), p=spec.pages.find(q=>q.number===+process.argv[3])||spec.pages[+process.argv[3]-1], k=+process.argv[4]/R.W;
-console.log(JSON.stringify(R.allPanels(p.layout).map((c,i)=>({n:i+1,id:c.panel.id,image:c.panel.image||null,focus:c.panel.focus||[0.5,0.5],zoom:c.panel.zoom||1,box:c.bbox.map(v=>Math.round(v*k))}))))"""
+const spec=JSON.parse(fs.readFileSync(process.argv[2],'utf8')), k=+process.argv[4]/R.W;
+const want=process.argv[3], pick=(pages)=>pages.find(q=>q.id===want)||(/^\\d+$/.test(want)?(pages.find(q=>q.number===+want)||pages[+want-1]):null);
+let p=pick(spec.pages), from='built';
+try { const sv=JSON.parse(fs.readFileSync(process.argv[5],'utf8')); if (Array.isArray(sv.pages) && (sv.boardAt||'')===(spec.boardAt||'')) { const q=p?sv.pages.find(x=>x.id&&x.id===p.id):pick(sv.pages); if (q&&q.layout) { p=q; from='saved'; } } } catch (e) { /* no saved copy */ }
+if (!p||!p.layout) { console.error('There is no such page with panels.'); process.exit(2); }
+console.log(JSON.stringify(R.allPanels(p.layout).map((c,i)=>({n:i+1,id:c.panel.id,image:c.panel.image||null,focus:c.panel.focus||[0.5,0.5],zoom:c.panel.zoom||1,box:c.bbox.map(v=>Math.round(v*k)),from,page:p.id||''}))))"""
     st = settings(project)
-    out = subprocess.check_output(["node", "-e", js, str(APP / "page-editor/render.js"), str(Path(project) / "spec.json"), str(number), str(st["page_px"])])
+    sv = saved_copy(project) if saved is None else saved
+    out = subprocess.check_output(["node", "-e", js, str(APP / "page-editor/render.js"), str(Path(project) / "spec.json"), str(number), str(st["page_px"]), str(sv)])
     return json.loads(out), st
 
 
-def tone_page(project, number, out):
-    cells, st = page_geometry(project, number)
+def tone_page(project, number, out, saved=None, by_id=False, only=None):
+    """by_id: one folder a panel, named by the panel's id, each with its own flat-<n>.png (what the app shows and exports);
+    only: tone that one panel again and keep what page.json says of the others."""
+    cells, st = page_geometry(project, number, saved)
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     W = st["page_px"]; H = round(W * 1.5)
+    safe = lambda s: "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(s))
     page = Image.new("L", (W, H), 255); done = []
+    old = {}
+    if only and (out / "page.json").exists():
+        old = {p.get("id"): p for p in json.loads((out / "page.json").read_text()).get("panels", [])}
     for c in cells:
         if not c["image"]:
             continue
-        d = out / f"panel-{c['n']:02d}"
+        if only and c.get("id") != only:
+            if c.get("id") in old:
+                done.append(old[c["id"]])
+            continue
+        d = out / (safe(c["id"]) if by_id and c.get("id") else f"panel-{c['n']:02d}")
         doc = tone_panel(Path(project) / c["image"], d, c["box"], f"panel {c['n']}", st, c["focus"], c["zoom"])
-        flat, _ = flatten_panel(d); page.paste(flat, (c["box"][0], c["box"][1]))
-        done.append({"panel": c["n"], "id": c.get("id"), "layers": [ly["name"] for ly in doc["layers"]], "baked_dots": baked_dots(Path(project) / c["image"])})
-    page.save(out / "page.png")
+        rec = {"panel": c["n"], "id": c.get("id"), "layers": [ly["name"] for ly in doc["layers"]], "baked_dots": baked_dots(Path(project) / c["image"])}
+        if by_id:
+            rec.update({"dir": d.name, "flat": write_flat(d), "box": c["box"], "image": c["image"], "focus": c["focus"], "zoom": c["zoom"], "px": W,
+                        "strokes": len(clean_strokes(json.loads((d / "strokes.json").read_text()), doc["size"])["strokes"]) if (d / "strokes.json").exists() else 0})
+        else:
+            flat, _ = flatten_panel(d); page.paste(flat, (c["box"][0], c["box"][1]))
+        done.append(rec)
+    if not by_id:
+        page.save(out / "page.png")
     (out / "page.json").write_text(json.dumps({"page": number, "settings": {k: st[k] for k in ("lines", "angle", "page_inches", "page_px")}, "panels": done, "check": check_layers(out)}, indent=1))
     return done
 
@@ -295,7 +439,9 @@ def main(argv):
         flatten_panel(args[1])[0].save(Path(args[1]) / "flat.png")
         print(json.dumps({"layers": [ly["name"] for ly in doc["layers"]], "baked_dots": baked_dots(args[0])}, indent=1))
     elif cmd == "page":
-        print(json.dumps(tone_page(args[0], int(args[1]), args[2]), indent=1))
+        print(json.dumps(tone_page(args[0], args[1], args[2], opt("saved"), "--by-id" in args, opt("only")), indent=1))
+    elif cmd == "strokes":
+        print(json.dumps(set_strokes(args[0], json.loads(Path(args[1]).read_text()))))
     elif cmd == "flatten":
         flatten_panel(args[0])[0].save(args[1]); print(args[1])
     elif cmd == "check":

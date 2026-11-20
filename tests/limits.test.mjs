@@ -51,3 +51,15 @@ test("a zipped book that unpacks to too much is refused", async () => {
     assert.equal(r.status, 400); assert.match((await r.json()).error, /unpacks to more/);
   } finally { await a.stop(); }
 });
+
+test("a body with no stated length that grows past the limit still gets its 413 (the connection is not cut under the answer)", async () => {
+  const a = await startApp();
+  try {
+    makeProject(a, "t-ch01");
+    const status = await new Promise((ok, bad) => { // chunked: no content-length
+      const u = new URL(a.base + "/api/cast/rename?p=t-ch01"), r = http.request({ host: u.hostname, port: u.port, path: u.pathname + u.search, method: "POST" }, (res) => { res.resume(); ok(res.statusCode); });
+      r.on("error", bad); for (let i = 0; i < 8; i++) r.write(Buffer.alloc(64 << 10, 97)); r.end(); });
+    assert.equal(status, 413);
+    assert.equal((await fetch(a.base + "/api/ping")).status, 200);
+  } finally { await a.stop(); }
+});

@@ -43,6 +43,7 @@ function panel(q) {
       if (b.src) d.src = String(b.src);
       if (parts.length > 1) d.join = true;
       if (l.off) d.off = true;
+      if (l.bridge && parts.length === 1) d.bridge = true; // the balloon sits on the border to the next panel
       lines.push(d);
     }
   }
@@ -57,6 +58,7 @@ function panel(q) {
   if (q.note) b.note = String(q.note);
   if (q.art) b.art = String(q.art);
   if (Array.isArray(q.src) && q.src.length) b.src = q.src.map(String);
+  if (q.breakout && String(q.breakout).trim()) b.breakout = String(q.breakout).trim().slice(0, 300); // what should stand above this panel's borders: offered in Layout as a break-out to add
   return { w: num(q.w, 1, 0.05, 20), type: "framed", board: b };
 }
 function row(r) { return { h: num(r.h, 1, 0.05, 20), panels: (r.panels || []).map(panel) }; }

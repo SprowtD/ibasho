@@ -10,7 +10,7 @@
   try { const saved = localStorage.getItem("ld-project"); const f = PROJECTS.find((q) => q.id === saved); if (f) { proj = f; SPEC_URL = f.dir + "spec.json"; BASE = f.dir; DOC = f.doc; } } catch (e) { /* no storage */ }
   const $ = (id) => document.getElementById(id);
 
-  let spec = null, original = null, pageIdx = 0, sel = -1, guides = true, mode = "letter", selP = null, tmplFilter = "all";
+  let spec = null, original = null, pageIdx = 0, sel = -1, guides = true, mode = "letter", selP = null, tmplFilter = "all", selB = null, shaping = false, selV = -1, placing = null; // selB: the chosen break-out; shaping: the chosen panel's corners can be dragged (selV = the chosen corner); placing: the corners tapped so far for a new free-shape panel
   let hist = [], redo = [], measured = [];
   let store = { kind: "none" }, saveTimer = null, dirty = false, edited = false;
   let bible = null, drafts = {}, savedPages = {}, saveFails = 0;
@@ -48,6 +48,123 @@
     if (pageIdx >= spec.pages.length) pageIdx = 0;
     if (sel >= items().length) sel = -1;
     if (selP && !findPanel(selP)) selP = null;
+    if (selB && !findBo(selB)) selB = null;
+  }
+  // ---------- a panel's own shape: corners placed by hand, as shares of the plain panel's box (R.layoutGeom gives that box as c.frame) ----------
+  const VMIN = -0.5, VMAX = 1.5;
+  /** The chosen panel's cell and its shape's corners on the page: [{ k, x, y }] in page units. */
+  function shapeCorners() {
+    const c = selP && page().layout && geomById(page()).get(selP); if (!c) return null;
+    const f = c.frame || c.bbox, w = f[2] - f[0], h = f[3] - f[1], sh = c.panel.shape;
+    const at = ([u, v]) => [c.mirrored ? f[2] - u * w : f[0] + u * w, f[1] + v * h];
+    const plain = () => { const mir = !c.inset && isRtl(); return c.drawPoly.map(([x, y]) => [round3((mir ? f[2] - x : x - f[0]) / w), round3((y - f[1]) / h)]); }; // the panel as it is now (slanted gutters and all), as a shape
+    return { c, f, w, h, at, pts: (R.validShape(sh) ? sh : plain()).map((p, k) => { const [x, y] = at(p); return { k, x, y }; }), plain };
+  }
+  const toShape = (S, x, y) => [round3(Math.min(VMAX, Math.max(VMIN, (S.c.mirrored || (!S.c.inset && isRtl()) ? S.f[2] - x * W : x * W - S.f[0]) / S.w))), round3(Math.min(VMAX, Math.max(VMIN, (y * H - S.f[1]) / S.h)))];
+  function ownShape() { const S = shapeCorners(); if (!S) return null; if (!R.validShape(S.c.panel.shape)) S.c.panel.shape = S.plain(); return S; } // from now on the panel keeps a shape of its own
+  function finishFree() {
+    const pts = placing || []; placing = null;
+    if (pts.length < 3) { render(); return setStatus("A panel needs three corners or more. Nothing was added."); }
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]), box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map(round3), w = box[2] - box[0], h = box[3] - box[1];
+    if (w < 0.05 || h < 0.04) { render(); return setStatus("That shape is too small to be a panel. Nothing was added."); }
+    const p = page(), n = { id: newId(), box, type: "framed", shape: pts.map(([x, y]) => [round3((x - box[0]) / w), round3((y - box[1]) / h)]) };
+    if (spec.kind === "storyboard") n.board = { shot: "", action: "", who: [], lines: [] };
+    mutateLayout(() => { (p.layout.insets = p.layout.insets || []).push(n); });
+    selP = n.id; selB = null; shaping = true; selV = -1; render(); snap();
+    setStatus("The panel is on the page, over the others. Drag its corners to adjust it, then pick or draw its art.", "ok");
+  }
+
+  // ---------- the Toner: screentone made by code over the Artist's flat greys, kept as layers; shown and exported as one flat picture a panel ----------
+  const tonerOn = () => !!(bible && bible.tone_by === "toner" && !bible.colour);
+  const toneBusy = (pg) => { const j = jobs["tone:" + (pg || page()).id]; return !!j && (j.status === "waiting" || j.status === "drawing"); };
+  const cellOf = (id, p = page()) => (p.layout ? R.allPanels(p.layout).find((c) => c.panel.id === id) : null);
+  async function tonePages(list, only) {
+    if (!canDraw()) return setStatus("The Toner needs Ibasho running on your computer.", "error");
+    list = list.filter((p) => p.layout && R.allPanels(p.layout).some((c) => c.panel.image)); if (!list.length) return setStatus("There is no drawn panel to tone yet.", "error");
+    clearTimeout(saveTimer); await save(); // the Toner reads the page as saved
+    let n = 0;
+    for (const p of list) { try { const r = await fetch(`/api/tone?p=${encodeURIComponent(proj.id)}&page=${encodeURIComponent(p.id)}${only ? "&panel=" + encodeURIComponent(only) : ""}`, { method: "POST" }); if (r.ok) { const j = await r.json(); jobs[j.panel] = Object.assign(j, { now: Date.now() }); n++; } } catch (e) { /* counted below */ } }
+    pollJobs(); render();
+    setStatus(n ? `The Toner is at work on ${only ? "the panel" : n === 1 ? "the page" : n + " pages"}: under a minute a page. It shows by itself when it is done.` : "The Toner could not start.", n ? "ok" : "error");
+  }
+  /** What the Toner last made is put on the panels (the renderer shows it only while it still fits the panel). */
+  async function takeTone() {
+    if (!canDraw() || !spec) return;
+    let m = null; try { const r = await fetch("/api/tone?p=" + encodeURIComponent(proj.id)); if (r.ok) m = await r.json(); } catch (e) { /* next time */ }
+    if (!m) return; let n = 0;
+    for (const p of spec.pages) { const rec = m[String(p.id).replace(/[^\w-]/g, "_")]; if (!rec || !p.layout) continue;
+      for (const c of R.allPanels(p.layout)) { const t = rec.panels.find((x) => x.id === c.panel.id); if (t && JSON.stringify(c.panel.toned || null) !== JSON.stringify(t)) { const { id, ...keep } = t; if (JSON.stringify(c.panel.toned || null) !== JSON.stringify(keep)) { c.panel.toned = keep; n++; } } } }
+    if (n) { render(); snap(); setStatus(`The Toner's screentone is on ${n} panel${n === 1 ? "" : "s"}.`, "ok"); }
+  }
+  // scraping and painting back by hand: strokes drawn on the panel's flat picture, kept beside the layers, never destroying them
+  const TH = { panel: null, page: null, size: [0, 0], strokes: [], tool: "soft", img: null, cur: null, dirty: false };
+  function thPaint() {
+    const cv = $("toneCanvas"), g = cv.getContext("2d"); if (!TH.img) return;
+    g.clearRect(0, 0, cv.width, cv.height); g.drawImage(TH.img, 0, 0, cv.width, cv.height);
+    const k = cv.width / TH.size[0]; g.lineCap = "round"; g.lineJoin = "round";
+    for (const s of TH.strokes.slice(TH.shown).concat(TH.cur ? [TH.cur] : [])) { // strokes not yet in the saved picture, shown roughly: white for scraping, blue for painting back
+      g.strokeStyle = s.tool === "back" ? "rgb(44 99 214 / .35)" : s.tool === "hatch" ? "rgb(255 255 255 / .6)" : "rgb(255 255 255 / .85)"; g.lineWidth = Math.max(2, s.size * k); g.beginPath();
+      s.points.forEach(([x, y], i) => (i ? g.lineTo(x * k, y * k) : g.moveTo(x * k, y * k))); if (s.points.length === 1) g.lineTo(s.points[0][0] * k + 0.1, s.points[0][1] * k); g.stroke(); }
+    for (const b of $("toneTools").children) b.setAttribute("aria-pressed", b.dataset.tool === TH.tool);
+    $("toneSizeOut").textContent = $("toneSize").value + " px"; $("toneUndo").disabled = !TH.strokes.length; $("toneClear").disabled = !TH.strokes.length; $("toneSave").disabled = !TH.dirty || TH.saving;
+    $("toneSave").textContent = TH.saving ? "Saving…" : "Save";
+  }
+  async function thLoad(src) { TH.img = await new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = no; im.src = BASE + src; }); const cv = $("toneCanvas"), k = Math.min(1, 1100 / TH.size[0]); cv.width = Math.round(TH.size[0] * k); cv.height = Math.round(TH.size[1] * k); }
+  async function openToneHand() {
+    const c = cellOf(selP); if (!c || R.toneState(c) !== "toned") return;
+    const t = c.panel.toned; let j = { strokes: [] };
+    try { const r = await fetch(`/api/tone/strokes?p=${encodeURIComponent(proj.id)}&page=${encodeURIComponent(page().id)}&panel=${encodeURIComponent(selP)}`); if (!r.ok) throw new Error((await r.json()).error); j = await r.json(); } catch (e) { return setStatus(e.message || "The panel's tone could not be opened.", "error"); }
+    Object.assign(TH, { panel: selP, page: page().id, size: j.size, strokes: j.strokes || [], cur: null, dirty: false, saving: false }); TH.shown = TH.strokes.length; // those are already in the picture
+    try { await thLoad(t.src); } catch (e) { return setStatus("The toned picture could not be loaded.", "error"); }
+    thPaint(); $("toneDlg").showModal();
+  }
+  async function saveToneHand() {
+    TH.saving = true; thPaint();
+    try {
+      const r = await fetch(`/api/tone/strokes?p=${encodeURIComponent(proj.id)}&page=${encodeURIComponent(TH.page)}&panel=${encodeURIComponent(TH.panel)}`, { method: "PUT", body: JSON.stringify({ size: TH.size, strokes: TH.strokes }) }), j = await r.json();
+      if (!r.ok) throw new Error(j.error || "not saved");
+      const pg = spec.pages.find((p) => p.id === TH.page), c = pg && cellOf(TH.panel, pg); if (c && c.panel.toned) { c.panel.toned.src = j.src; c.panel.toned.strokes = j.strokes; }
+      TH.shown = TH.strokes.length; TH.dirty = false; await thLoad(j.src); render(); snap(); setStatus("Saved. The page and the export show it.", "ok");
+    } catch (e) { setStatus("The tone could not be saved: " + e.message, "error"); }
+    TH.saving = false; thPaint();
+  }
+
+  // ---------- break-outs: a figure drawn by itself (cut out of plain white) and laid over the page, above the panel borders ----------
+  const breakouts = (p = spec && spec.pages[pageIdx]) => (p && p.layout && p.layout.breakouts) || [];
+  const findBo = (id) => breakouts().find((b) => b.id === id) || null;
+  const boJob = (b) => jobs["breakout:" + b.id];
+  const boBusy = (b) => { const j = boJob(b); return !!j && (j.status === "waiting" || j.status === "drawing"); };
+  async function drawBo(b) {
+    if (!canDraw()) return setStatus("Drawing a break-out needs Ibasho running on your computer.", "error");
+    clearTimeout(saveTimer); await save();
+    let r, j = {}; try { r = await fetch("/api/breakouts?p=" + encodeURIComponent(proj.id), { method: "POST", body: JSON.stringify({ id: b.id, who: b.who || "", action: b.action || "" }) }); j = await r.json(); } catch (e) { return setStatus("The break-out could not be sent to be drawn.", "error"); }
+    if (!r.ok) return setStatus(j.error || "The break-out could not be drawn.", "error");
+    jobs[j.panel] = Object.assign(j, { now: Date.now() }); pollJobs(); render();
+    setStatus("Codex is drawing the break-out: about three minutes. It lands on the page by itself.", "ok");
+  }
+  /** Newly drawn break-outs are put on the page (the newest take of each). */
+  async function takeBreakouts() {
+    if (!canDraw() || !spec || !spec.pages.some((p) => breakouts(p).length)) return;
+    let m = null; try { const r = await fetch("/api/breakouts?p=" + encodeURIComponent(proj.id)); if (r.ok) m = await r.json(); } catch (e) { /* next time */ }
+    if (!m) return; const no = (s) => +(/-take(\d+)\.png$/.exec(s || "") || [0, 0])[1]; let n = 0;
+    for (const p of spec.pages) for (const b of breakouts(p)) if (m[b.id] && no(m[b.id]) > no(b.image)) { b.image = m[b.id]; n++; }
+    if (n) { render(); snap(); setStatus(n === 1 ? "The break-out is drawn and on the page. Drag its dots to place it." : `${n} break-outs are drawn and on the page.`, "ok"); }
+  }
+  function boWords(b) { // ask who and what; false when the person backs out
+    const f = b.panel && findPanel(b.panel), bd = f && f.panel.board, first = bd && bd.who && bd.who[0] ? bd.who[0].name : "";
+    const who = prompt("Who or what breaks out of the panel? A character or prop from Series is drawn from its sheet.", b.who != null ? b.who : first); if (who == null) return false;
+    const action = prompt("What are they doing? Describe the pose in a line.", b.action != null ? b.action : (bd && (bd.breakout || bd.action)) || ""); if (action == null) return false;
+    if (!who.trim() && !action.trim()) { setStatus("Say who or what breaks out, and what they are doing.", "error"); return false; }
+    b.who = who.trim().slice(0, 80); b.action = action.trim().slice(0, 600); return true;
+  }
+  function addBreakout() {
+    const p = page(); if (!p.layout) return;
+    const c = selP && geomById(p).get(selP), bb = c ? c.bbox : [W * 0.25, H * 0.25, W * 0.75, H * 0.75];
+    const b = { id: "bo" + newId(), ...(selP ? { panel: selP } : {}) }; if (!boWords(b)) return;
+    const w = Math.min(0.5, Math.max(0.22, (bb[2] - bb[0]) / W * 0.75)), cx = (bb[0] + bb[2]) / 2 / W, top = Math.max(0.01, bb[1] / H - 0.03), x0 = Math.min(Math.max(cx - w / 2, 0), 1 - w); // as tall as it is wide in page shares = a 2:3 figure; it starts a little above its panel's top border
+    b.box = [x0, Math.min(top, 1 - w), x0 + w, Math.min(top, 1 - w) + w].map(round3);
+    (p.layout.breakouts = p.layout.breakouts || []).push(b); selB = b.id; selP = null; render(); snap();
+    drawBo(b);
   }
 
   // ---------- storage ----------
@@ -122,7 +239,25 @@
     } catch (e) { setStatus("Saved edits could not load. New edits still save.", "warn"); }
   }
   let storeReady = null;
-  async function initStore() { if (!storeReady) storeReady = detectStore(); await storeReady; await loadSaved(); loadPicModel(); registerAssistant(); }
+  async function initStore() { if (!storeReady) storeReady = detectStore(); await storeReady; await loadSaved(); loadPicModel(); registerAssistant(); loadOwnLayouts(); }
+  // ---------- your own page layouts: saved on this computer, offered in every project beside the ready-made ones ----------
+  let ownLayouts = [];
+  const T = () => ((spec && spec.templates) || []).concat(ownLayouts);
+  async function loadOwnLayouts() { if (store.kind !== "local") return; try { const r = await fetch("/api/layouts"); if (r.ok) { ownLayouts = (await r.json()).layouts || []; if (spec && mode === "layout") renderLayoutPanel(); } } catch (e) { /* none */ } }
+  /** The page's layout with only its build kept (tiers, shares, slants, panel types): no pictures, storyboard or ids. */
+  function bareRows(rows) { return rows.map((r) => Object.assign({ h: r.h || 1 }, r.slant ? { slant: r.slant } : {}, r.strip ? { strip: true } : {}, { panels: r.panels.map((q) => Object.assign({ w: q.w || 1 }, q.slant ? { slant: q.slant } : {}, q.rows ? { rows: bareRows(q.rows) } : (q.type && q.type !== "framed" ? { type: q.type } : {}), !q.rows && q.shape ? { shape: q.shape } : {})) })); }
+  async function saveOwnLayout() {
+    const p = page(); if (!p.layout) return; const n = leaves(p.layout.rows).length;
+    const name = prompt("A name for this layout (it is saved on this computer and offered in every project):", `${n} panel${n === 1 ? "" : "s"}, mine`); if (name == null) return;
+    const r = await fetch("/api/layouts", { method: "POST", body: JSON.stringify({ name, rows: bareRows(p.layout.rows) }) }), j = await r.json().catch(() => ({}));
+    if (!r.ok) return setStatus(j.error || "The layout could not be saved.", "error");
+    ownLayouts = j.layouts; tmplFilter = "mine"; $("tmplDetails").open = true; renderLayoutPanel(); setStatus(`Saved as ${j.code}. It is under Page layouts, Mine, in every project.`, "ok");
+  }
+  async function removeOwnLayout(code) {
+    const t = ownLayouts.find((x) => x.code === code); if (!t || !confirm(`Remove your layout ${code} (${t.name})? Pages that use it keep their layout.`)) return;
+    const r = await fetch("/api/layouts?code=" + encodeURIComponent(code), { method: "DELETE" }); if (!r.ok) return setStatus("The layout could not be removed.", "error");
+    ownLayouts = (await r.json()).layouts; if (!ownLayouts.length) tmplFilter = "all"; renderLayoutPanel(); setStatus(`Removed ${code}.`, "ok");
+  }
 
   function queueSave() {
     dirty = true;
@@ -180,7 +315,7 @@
     if (unboarded) $("chapterHead").innerHTML = `<div><h2>${R.esc(spec.project || "")} · Chapter ${R.esc(spec.chapter || "")}</h2><p>Not storyboarded yet. “Storyboard this chapter” lays out the pages from the text.</p></div>`;
     else $("chapterHead").innerHTML = `<div><h2>${R.esc(spec.project || "")} · Chapter ${R.esc(spec.chapter || "")}</h2>${$("chapterView").dataset.tiles}<p>${spec.pages.length} pages` +
       (lines ? ` · ${lines} script lines` : "") + ` · ${res.chapter.length ? `<b class="bad">${res.chapter.length} script problems</b>` : lines ? "every line placed, word for word, in order" : ""}` +
-      ` · ${pagesWithNotes ? `${pagesWithNotes} pages flagged` : "all pages pass the Paneler checks"}</p>` +
+      ` · ${pagesWithNotes ? `${pagesWithNotes} page${pagesWithNotes === 1 ? "" : "s"} flagged` : "all pages pass the Paneler checks"}</p>` +
       (res.chapter.length ? `<ul class="chap-issues">${res.chapter.map((c) => `<li>${R.esc(c.msg)}</li>`).join("")}</ul>` : "") +
       ((res.advice || []).length ? `<ul class="chap-advice">${res.advice.map((c) => `<li>${R.esc(c.msg)}</li>`).join("")}</ul>` : "") +
       (() => { const L = lib(); let n = 0; for (const p of spec.pages) if (p.layout) for (const q of leaves(p.layout.rows).concat(p.layout.insets || [])) { const e = q.image && L[q.image]; if (e && (e.review || []).length && q.reviewOk !== q.image) n++; }
@@ -207,6 +342,7 @@
     }).join("");
     $("letterAllBtn").hidden = !spec.pages.some((p) => p.layout && R.planFor(p).length);
     $("exportAllBtn").hidden = store.kind !== "local";
+    $("toneAllBtn").hidden = store.kind !== "local" || !tonerOn() || !spec.pages.some((p) => p.layout && R.allPanels(p.layout).some((c) => c.panel.image));
     { const n = missingCount(); $("drawAllBtn").hidden = !canDraw() || !n || !spec.boardAt; $("drawAllBtn").textContent = `Draw the ${n} missing picture${n === 1 ? "" : "s"}`; }
     renderExports();
   }
@@ -511,7 +647,7 @@
   }
   function renderSeries() {
     if (!bible) { $("seCast").innerHTML = `<p class="empty">This project has no series settings.</p>`; return; }
-    setVal("seStyle", bible.style || ""); $("seColour").checked = !!bible.colour; $("seStrict").checked = !!bible.strict; $("seNoNames").checked = !!bible.no_names; $("seStandInsBox").hidden = !bible.no_names; setVal("seStandIns", bible.stand_ins || "");
+    setVal("seStyle", bible.style || ""); $("seColour").checked = !!bible.colour; $("seStrict").checked = !!bible.strict; $("seToner").checked = bible.tone_by === "toner"; $("seTonerBox").style.display = bible.colour ? "none" : "flex"; $("seNoNames").checked = !!bible.no_names; $("seStandInsBox").hidden = !bible.no_names; setVal("seStandIns", bible.stand_ins || "");
     readingSegs($("seReading"), readingNow());
     $("seReadingNote").textContent = readingNow() === "rtl" ? "Panels run from the right of each row, and in a panel the first balloon sits top right. The words stay in horizontal English."
       : "Panels run from the left of each row, and in a panel the first balloon sits top left.";
@@ -604,6 +740,7 @@
       const f = e.target.files[0], cur = bible && STYLES.find((q) => q.id === bible.style_id); if (!f || !cur || !cur.own) return;
       if (await ownSend({ id: cur.id, dataUrl: await shrinkUpload(f) })) { renderSeries(); setStatus("Example picture added.", "ok"); } e.target.value = "";
     });
+    $("seToner").addEventListener("change", (e) => { if (!bible) return; if (e.target.checked) bible.tone_by = "toner"; else delete bible.tone_by; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     $("seStrict").addEventListener("change", (e) => { if (!bible) return; bible.strict = e.target.checked; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     $("seNoNames").addEventListener("change", (e) => { if (!bible) return; bible.no_names = e.target.checked; $("seStandInsBox").hidden = !bible.no_names; $("seStyleNote").textContent = "Saving…"; saveBible(); });
     $("seStandIns").addEventListener("input", (e) => { if (!bible) return; bible.stand_ins = e.target.value; $("seStyleNote").textContent = "Saving…"; saveBible(); });
@@ -680,6 +817,7 @@
       for (const b of p.layout ? [] : p.panels || []) guidesSvg += `<rect x="${b[0] * W}" y="${b[1] * H}" width="${(b[2] - b[0]) * W}" height="${(b[3] - b[1]) * H}" class="g-panel"/>`;
       for (const b of R.protectBoxes(p, lib())) guidesSvg += `<rect x="${b[0] * W}" y="${b[1] * H}" width="${(b[2] - b[0]) * W}" height="${(b[3] - b[1]) * H}" class="g-protect"/>`;
     }
+    if (mode !== "layout") { placing = null; shaping = false; selV = -1; } // a half-made shape does not follow you to another screen
     let hits = "", selSvg = "";
     const G = p.layout ? R.layoutGeom(p.layout) : null;
     const pts = (ps) => ps.map((q) => q[0].toFixed(1) + "," + q[1].toFixed(1)).join(" ");
@@ -729,6 +867,26 @@
             `<path class="knob-icon" d="M${x1 - 7} ${y1 + 7}L${x1 + 7} ${y1 - 7}"/></g>`;
         }
       }
+      if (shaping && selP && !placing) { const S = shapeCorners(); if (S) { // the chosen panel's corners: a dot on each, a small + on each edge
+        S.pts.forEach((a, k) => { const b = S.pts[(k + 1) % S.pts.length], mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          if (S.pts.length < 64 && Math.hypot(b.x - a.x, b.y - a.y) > 70) hits += `<circle class="vadd" data-part="vadd" data-k="${k}" cx="${mx}" cy="${my}" r="13"/><path class="vadd-i" d="M${mx - 7} ${my}h14M${mx} ${my - 7}v14"/>`; });
+        for (const a of S.pts) hits += `<circle class="vtx" data-part="vtx" data-k="${a.k}" data-on="${selV === a.k ? 1 : 0}" cx="${a.x}" cy="${a.y}" r="17"/>`; } }
+      for (const b of breakouts(p)) { // above everything else on the page: tap to choose, drag to move
+        const x0 = b.box[0] * W, y0 = b.box[1] * H, x1 = b.box[2] * W, y1 = b.box[3] * H;
+        hits += `<rect class="phit" data-bo="${R.esc(b.id)}" x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/>`;
+        if (selB === b.id) {
+          selSvg += `<rect class="sel" x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/>`;
+          hits += `<g class="inset-knobs"><circle class="inset-knob" data-part="bmove" data-bo="${R.esc(b.id)}" cx="${x0}" cy="${y0}" r="20"/><path class="knob-icon" d="M${x0 - 9} ${y0}h18M${x0} ${y0 - 9}v18"/>` +
+            `<circle class="inset-knob" data-part="bresize" data-bo="${R.esc(b.id)}" cx="${x1}" cy="${y1}" r="20"/><path class="knob-icon" d="M${x1 - 7} ${y1 + 7}L${x1 + 7} ${y1 - 7}"/></g>`;
+        }
+      }
+    }
+    if (placing) selSvg += (placing.length > 1 ? `<polygon class="free-line" points="${placing.map(([x, y]) => (x * W).toFixed(1) + "," + (y * H).toFixed(1)).join(" ")}"/>` : "") + placing.map(([x, y], k) => `<circle class="vtx" data-on="${k === 0 ? 1 : 0}" cx="${x * W}" cy="${y * H}" r="${k === 0 ? 22 : 15}" style="pointer-events:none"/>`).join("");
+    $("page").classList.toggle("placing", !!placing);
+    for (const b of breakouts(p)) if (!b.image) { // not drawn yet: its place is shown on the page (never in an export)
+      const x0 = b.box[0] * W, y0 = b.box[1] * H, x1 = b.box[2] * W, y1 = b.box[3] * H, j = boJob(b);
+      selSvg += `<rect class="bo-wait" x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="14"/><text class="bo-wait-t" x="${(x0 + x1) / 2}" y="${(y0 + y1) / 2 - 8}">Break-out${b.who ? ": " + R.esc(b.who.slice(0, 22)) : ""}</text>` +
+        `<text class="bo-wait-t" x="${(x0 + x1) / 2}" y="${(y0 + y1) / 2 + 28}">${boBusy(b) ? (j.status === "drawing" ? "Drawing…" : "Waiting its turn") : j && j.status === "failed" ? "Not drawn" : "Not drawn yet"}</text>`;
     }
     if (mode === "letter" && sel >= 0 && measured[sel]) {
       const L = measured[sel], [ox, oy] = R.outer(L);
@@ -816,6 +974,8 @@
     const before = jobs; jobs = {};
     for (const j of list) jobs[j.panel] = j;
     const landed = list.filter((j) => j.status === "done" && (!before[j.panel] || before[j.panel].status !== "done"));
+    if (landed.some((j) => j.kind === "breakout")) takeBreakouts();
+    if (landed.some((j) => j.kind === "tone")) takeTone();
     if (landed.some((j) => j.kind === "sheet")) await reloadBible();
     if (mode === "series") { if (document.activeElement.tagName !== "TEXTAREA") renderSeries(); }
     if (landed.some((j) => j.kind !== "sheet")) await refreshArt();
@@ -948,11 +1108,13 @@
       return `<li data-kind="page" data-idx="${i}"><button type="button" class="pgrow" data-page="${i}" aria-current="${here}">${GRIP}${pageThumb(p)}<span class="pl"><span>${R.esc(p.label || "Page " + p.number)}</span><small>${st}</small></span></button>${sub}</li>`;
     }).join("") + `</ul><p class="side-tip">Drag the dots to reorder pages or panels. Keyboard: Alt + up or down arrow.</p>`;
   }
+  /** Page numbers follow the order; the cover is not counted and carries no number. */
+  function renumber() { let n = 0; for (const q of spec.pages) { if (q.cover) { q.number = 0; continue; } n++; if (!q.label || /^Page \d+$/.test(q.label)) q.label = "Page " + n; q.number = n; } }
   function movePage(from, to) {
     if (to === from || to < 0 || to >= spec.pages.length) return;
     const cur = page().id, [p] = spec.pages.splice(from, 1);
     spec.pages.splice(to, 0, p);
-    if (spec.kind === "storyboard") spec.pages.forEach((q, i) => { if (/^Page \d+$/.test(q.label || "")) q.label = "Page " + (i + 1); q.number = i + 1; });
+    if (spec.kind === "storyboard") renumber();
     pageIdx = spec.pages.findIndex((q) => q.id === cur);
     render(); snap();
     setStatus(`Moved to place ${to + 1}. Undo puts it back.`, "ok");
@@ -1176,6 +1338,14 @@
     if (mode !== "art") return;
     const p = page(), f = p.layout ? findPanel(selP) : null;
     $("artHint").hidden = !!f; $("artTools").hidden = !f; $("pageGen").hidden = true;
+    { const c = f && cellOf(selP), st = c ? R.toneState(c) : "", t = c && c.panel.toned, show = !!c && store.kind === "local" && !(bible && bible.colour) && proj.own !== false, busy = toneBusy();
+      $("toneBox").hidden = !show;
+      if (show) { const j = jobs["tone:" + p.id];
+        $("toneInfo").textContent = busy ? "The Toner is at work on this page…" : j && j.status === "failed" ? "The Toner stopped: " + (j.msg || "no reason given") : !c.panel.image ? "This panel has no picture yet. Draw it first."
+          : st === "toned" ? `Toned: ${t.layers.length ? t.layers.map((n) => n.replace(/^panel \d+, /, "")).join("; ") : "no grey area was found, so no dots were laid"}${t.strokes ? ` · ${t.strokes} stroke${t.strokes === 1 ? "" : "s"} by hand` : ""}.${t.baked ? " Its picture already has dots drawn in: they can clash with the Toner's. Draw it again with flat greys." : ""}`
+          : st === "stale" ? "This panel has changed since it was toned (its picture, its place or its crop), so its plain picture is showing. Tone it again."
+          : tonerOn() ? "Not toned yet. The Toner turns this picture's flat greys into screentone." : "The Toner can lay screentone over flat greys. For new pictures to be drawn with flat greys, turn on “Screentone made by the Toner” in Series.";
+        $("tonePage").disabled = busy || !canDraw(); $("toneOne").hidden = !st; $("toneOne").disabled = busy || !canDraw(); $("toneHand").hidden = st !== "toned" || !t.layers.length; } }
     if (!p.layout) { $("artHint").textContent = "This page was drawn as one picture. Panels can be drawn one at a time on storyboard pages."; return; }
     $("artHint").textContent = "Tap a panel, on the page or in the sidebar, to draw it.";
     if (!f) {
@@ -1332,25 +1502,127 @@
   // ---------- the Assistant on the manga screen (studio.js): what is open, and the actions it may propose ----------
   function pageOfPanel(id) { return spec.pages.findIndex((p) => p.layout && leaves(p.layout.rows).concat(p.layout.insets || []).some((q) => q.id === id)); }
   function openPanel(id) { const i = pageOfPanel(id); if (i < 0) throw new Error("There is no panel " + id + " in this chapter."); pageIdx = i; selP = id; sel = -1; mode = "art"; render(); }
+  /** What the Assistant is shown. Every panel's storyboard in full when it fits; cut shorter only on a very long chapter (the whole
+   *  thing must stay under the server's limit, or its end would be lost). */
   function assistantWhere() {
     if (!spec) return { screen: "manga", note: "No chapter is open." };
-    return { screen: "manga", project: proj.id, chapter: proj.label || spec.project || proj.id, open: { page: page() && page().number, panel: selP, mode },
+    const build = (cut) => ({ screen: "manga", project: proj.id, chapter: proj.label || spec.project || proj.id, reads: spec.reading === "rtl" ? "right to left" : "left to right",
+      open: { page: page() && (page().cover ? "cover" : page().number), page_id: page() && page().id, panel: selP, mode },
       picture_model: picModel ? `${picModel.name}${picModel.quality ? " (" + picModel.quality + ")" : ""}` : "Codex",
       characters: bible ? Object.keys(bible.cast || {}) : [], places: bible ? Object.keys(bible.places || {}) : [], props: bible ? Object.keys(bible.props || {}) : [],
-      pages: spec.pages.map((p) => ({ page: p.number, label: p.label || "", panels: p.layout ? leaves(p.layout.rows).concat(p.layout.insets || []).map((q) => ({ id: q.id, drawn: !!q.image, queued: !!q.request,
-        action: ((q.board && q.board.action) || "").slice(0, 220), who: ((q.board && q.board.who) || []).map((w) => w.name), lines: ((q.board && q.board.lines) || []).map((l) => `${l.speaker || "caption"}: ${l.text}`).slice(0, 6) })) : [] })) };
+      note: "Panels are listed in reading order. A page is named by its number (or \"cover\").",
+      pages: spec.pages.map((p) => ({ page: p.cover ? "cover" : p.number, label: p.label || "", balloons: (p.text || []).length, panels: p.layout ? R.allPanels(p.layout).map((c) => c.panel).map((q) => { const bd = q.board || {};
+        return { id: q.id, drawn: !!q.image, queued: !!q.request, shot: bd.shot || undefined, job: bd.job || undefined, weight: bd.weight || undefined,
+          action: String(bd.action || "").slice(0, cut), who: (bd.who || []).map((w) => w.name), lines: (bd.lines || []).map((l) => `${l.speaker || "caption"}: ${String(l.text || "").slice(0, cut)}`).slice(0, 12) }; }) : [] })) });
+    for (const cut of [1200, 600, 300, 160]) { const w = build(cut); if (JSON.stringify(w).length < 56000 || cut === 160) return w; }
+  }
+  // ----- page-level steps for the Assistant: each changes only the pages named, at once, and Undo takes it back -----
+  function asPage(ref) {
+    const s = String(ref == null ? "" : ref).trim().replace(/^page\s*/i, "");
+    let i = spec.pages.findIndex((p) => p.id === s); if (i < 0) i = /^cover$/i.test(s) ? spec.pages.findIndex((p) => p.cover) : spec.pages.findIndex((p) => !p.cover && String(p.number) === s);
+    if (i < 0) throw new Error(`There is no page "${ref}" in this chapter.`);
+    return i;
+  }
+  const asName = (p) => (p.cover ? "the cover" : "page " + p.number);
+  const mainPanels = (p) => R.allPanels(p.layout).map((c) => c.panel).filter((q) => !(p.layout.insets || []).includes(q)); // in reading order
+  const asIds = (v) => (Array.isArray(v) ? v : String(v == null ? "" : v).split(/[\s,;|]+/)).map((x) => String(x).trim()).filter(Boolean);
+  function asPanelPage(id) { const i = pageOfPanel(String(id || "").trim()); if (i < 0) throw new Error(`There is no panel "${id}" in this chapter.`); return i; }
+  function asBoardOnly() { if (!spec || spec.kind !== "storyboard") throw new Error("This works on a storyboarded chapter."); }
+  /** Put these panels (reading order) on page i: the director picks the layout by their weights, and a lettered page is lettered again. */
+  function setPagePanels(i, panels, relettered) {
+    const p = spec.pages[i], ids = new Set(panels.map((q) => q.id));
+    p.layout = { ...(p.layout && p.layout.rtl ? { rtl: true } : {}), ...(p.layout && (p.layout.insets || []).length ? { insets: p.layout.insets } : {}), ...(p.layout && (p.layout.breakouts || []).length ? { breakouts: p.layout.breakouts } : {}),
+      rows: panels.map((q) => { const n = { ...q, w: 1 }; delete n.slant; return { h: 1, panels: [n] }; }) };
+    delete p.plan; ensureIds(p);
+    const keep = pageIdx; pageIdx = i;
+    p.text = (p.text || []).filter((it) => !it.panel || it.free || ids.has(it.panel) || (p.layout.insets || []).some((q) => q.id === it.panel)); // balloons of panels that left go with them
+    try { if (panels.length > 1) applyTemplate(null, true, true); if (relettered && R.planFor(p).length) p.text = R.autoPlace(p, spec, lib(), measureText); }
+    finally { pageIdx = keep; }
+  }
+  const blankPage = (like) => ({ id: "board-" + newId(), number: 0, label: "", note: "", text: [], layout: { ...(like.layout && like.layout.rtl ? { rtl: true } : {}), rows: [] } });
+  function asDone(open, msg) { pageIdx = Math.max(0, Math.min(spec.pages.length - 1, open)); sel = -1; selP = null; if (mode !== "chapter") mode = "layout"; render(); snap(); setStatus(msg + " Undo takes it back.", "ok"); return msg; }
+  function asSplit(a) {
+    asBoardOnly(); const i = asPage(a.page), p = spec.pages[i]; if (!p.layout || p.cover) throw new Error(`${asName(p)} has no panels to spread out.`);
+    const order = mainPanels(p), cuts = [...new Set(asIds(a.after).map((id) => order.findIndex((q) => q.id === id)))].sort((x, y) => x - y);
+    if (!cuts.length || cuts.some((c) => c < 0 || c >= order.length - 1)) throw new Error(`"after" must name panels on ${asName(p)} that are not its last one. Its panels, in reading order: ${order.map((q) => q.id).join(", ")}.`);
+    const groups = []; let s0 = 0; for (const c of cuts) { groups.push(order.slice(s0, c + 1)); s0 = c + 1; } groups.push(order.slice(s0));
+    const lettered = (p.text || []).length > 0, texts = p.text || [], was = p.number;
+    const made = groups.slice(1).map(() => blankPage(p)); spec.pages.splice(i + 1, 0, ...made);
+    made.forEach((np, k) => { const ids = new Set(groups[k + 1].map((q) => q.id)); np.text = texts.filter((it) => ids.has(it.panel)); });
+    { const gone = new Set(groups.slice(1).flat().map((q) => q.id)); p.text = texts.filter((it) => !gone.has(it.panel)); }
+    renumber(); groups.forEach((g, k) => setPagePanels(i + k, g, lettered));
+    return asDone(i, `Page ${was} is now pages ${p.number} ${made.length === 1 ? "and" : "to"} ${p.number + made.length} (${groups.map((g) => g.length).join(", ")} panels)${lettered ? ", lettered again" : ""}. ${spec.pages.filter((q) => !q.cover).length} pages in the chapter.`);
+  }
+  function asMove(a) {
+    asBoardOnly(); const i = asPanelPage(a.panel), p = spec.pages[i], order = mainPanels(p), k = order.findIndex((q) => q.id === String(a.panel).trim()), next = /^next/i.test(String(a.to || ""));
+    if (!next && !/^prev/i.test(String(a.to || ""))) throw new Error('"to" is next or previous.');
+    if (k < 0) throw new Error("That panel is an inset: move it in Layout.");
+    if (k !== (next ? order.length - 1 : 0)) throw new Error(`Only the ${next ? "last" : "first"} panel of a page can move to the ${next ? "next" : "previous"} page (the story stays in order). On ${asName(p)} that is ${order[next ? order.length - 1 : 0].id}.`);
+    if (order.length < 2) throw new Error(`It is the only panel on ${asName(p)}. Use join_pages to put two pages together.`);
+    let j = next ? i + 1 : i - 1, made = false;
+    if (!spec.pages[j] || !spec.pages[j].layout || spec.pages[j].cover) { spec.pages.splice(next ? i + 1 : i, 0, blankPage(p)); made = true; j = next ? i + 1 : i; }
+    const src = spec.pages[next ? i : (made ? i + 1 : i)], dst = spec.pages[j], q = order[k], lettered = (src.text || []).length > 0 || (dst.text || []).length > 0;
+    const there = made ? [] : mainPanels(dst); dst.text = (dst.text || []).concat((src.text || []).filter((it) => it.panel === q.id)); src.text = (src.text || []).filter((it) => it.panel !== q.id);
+    renumber(); setPagePanels(spec.pages.indexOf(src), order.filter((x) => x !== q), lettered); setPagePanels(spec.pages.indexOf(dst), next ? [q, ...there] : [...there, q], lettered);
+    return asDone(spec.pages.indexOf(dst), `Panel ${q.id} moved to ${made ? "a new " : ""}${asName(dst)} (${mainPanels(dst).length} panels there now, ${mainPanels(src).length} left on ${asName(src)})${lettered ? "; both lettered again" : ""}.`);
+  }
+  function asJoin(a) {
+    asBoardOnly(); const i = asPage(a.page), p = spec.pages[i], n = spec.pages[i + 1];
+    if (!p.layout || p.cover || !n || !n.layout || n.cover) throw new Error(`${asName(p)} has no page after it to join with.`);
+    const all = mainPanels(p).concat(mainPanels(n)); if (all.length > 8) throw new Error(`That would put ${all.length} panels on one page: too many to read. Move single panels with move_panel.`);
+    const lettered = (p.text || []).length > 0 || (n.text || []).length > 0, was = [p.number, n.number];
+    p.text = (p.text || []).concat(n.text || []); if ((n.layout.insets || []).length) p.layout.insets = (p.layout.insets || []).concat(n.layout.insets);
+    spec.pages.splice(i + 1, 1); renumber(); setPagePanels(i, all, lettered);
+    return asDone(i, `Pages ${was[0]} and ${was[1]} are now one page, ${p.number}, with ${all.length} panels${lettered ? ", lettered again" : ""}. ${spec.pages.filter((q) => !q.cover).length} pages in the chapter.`);
+  }
+  function asLayout(a) {
+    const i = asPage(a.page), p = spec.pages[i]; if (!p.layout || p.cover) throw new Error(`${asName(p)} is one whole picture.`);
+    const n = mainPanels(p).length, code = String(a.code || "").trim(); if (n < 2) throw new Error(`${asName(p)} has one panel: there is nothing to lay out.`);
+    if (code && !T().some((t) => t.code === code)) throw new Error(`There is no layout "${code}".`);
+    const keep = pageIdx; pageIdx = i; let t; const before = JSON.stringify(p.layout.rows);
+    try { t = applyTemplate(code, !code, true); } finally { pageIdx = keep; }
+    if (!t) throw new Error(`No ready-made layout has ${n} panels. Change it by hand in Layout.`);
+    if (JSON.stringify(p.layout.rows) === before) return `${asName(p)} already has the layout that fits best (${t.code}). Nothing changed.`;
+    return asDone(i, `${asName(p)[0].toUpperCase() + asName(p).slice(1)} is laid out again: ${t.code}${t.name ? " " + t.name : ""}, sized by each panel's weight.`);
+  }
+  function asEditPanel(a) {
+    const i = asPanelPage(a.panel), f = spec.pages[i], q = R.allPanels(f.layout).map((c) => c.panel).find((x) => x.id === String(a.panel).trim()), D = window.Director, done = [];
+    q.board = q.board || { who: [], lines: [] };
+    if (a.action != null && String(a.action).trim() && String(a.action).trim() !== q.board.action) { q.board.action = String(a.action).trim().slice(0, 2000); done.push("what it shows"); }
+    if (a.shot != null && String(a.shot).trim() && String(a.shot).trim() !== q.board.shot) { q.board.shot = String(a.shot).trim().slice(0, 80); done.push("the shot"); }
+    if (a.job != null && String(a.job).trim()) { const j = String(a.job).trim(); if (D && D.JOBS && !D.JOBS[j]) throw new Error(`"${j}" is not a job. The jobs: ${Object.keys(D.JOBS).join(", ")}.`); if (q.board.job !== j) { q.board.job = j; done.push("its job"); } }
+    if (a.weight != null && String(a.weight).trim()) { const w = Math.round(+a.weight); if (!(w >= 1 && w <= 5)) throw new Error("The weight is 1 (a tiny beat) to 5 (the big moment)."); if (q.board.weight !== w) { q.board.weight = w; done.push("its weight"); } }
+    if (!done.length) return `Nothing to change on panel ${q.id}: it already says that.`;
+    pageIdx = i; selP = q.id; sel = -1; render(); snap();
+    const msg = `Panel ${q.id}: changed ${done.join(", ")}. Its lines are untouched.${q.image ? " The picture is the old one until it is drawn again." : ""}${done.some((d) => /weight|job/.test(d)) ? " Use layout_page to size the page to it." : ""}`;
+    setStatus(msg + " Undo takes it back.", "ok"); return msg;
   }
   function registerAssistant() {
     if (!window.Ibasho || !window.Ibasho.registerAssistant) return;
+    const tryIt = (fn) => (a) => { try { fn(a); return ""; } catch (e) { return e.message; } }; // "can this run?" without changing anything
+    const hasPage = tryIt((a) => asPage(a.page)), hasPanel = tryIt((a) => asPanelPage(a.panel));
     window.Ibasho.registerAssistant({ where: assistantWhere, actions: {
-      open_panel: { desc: "Show one panel in Art mode (its picture, prompt, tags)", args: { panel: "panel id" }, auto: true, label: (a) => `Open panel ${a.panel}`, run: (a) => { openPanel(a.panel); } },
-      draw_panel: { desc: "Draw or redraw one panel with the picture model in use. note = the person's direction, added to the Artist's prompt (keeps the storyboard). prompt = a whole new prompt instead (only when asked).", args: { panel: "panel id", note: "optional direction", prompt: "optional whole prompt" },
+      open_panel: { desc: "Show one panel in Art mode (its picture, prompt, tags)", args: { panel: "panel id" }, auto: true, check: hasPanel, label: (a) => `Open panel ${a.panel}`, run: (a) => { openPanel(a.panel); } },
+      open_page: { desc: "Show one page", args: { page: "page number, or cover" }, auto: true, check: hasPage, label: (a) => `Open page ${a.page}`, run: (a) => { pageIdx = asPage(a.page); sel = -1; selP = null; if (mode === "chapter") mode = "layout"; render(); } },
+      split_page: { desc: "Spread ONE crowded page over two or more pages. Free, done at once, only that page changes. after = the panel id that ends each page but the last (for three pages give two ids). The story order is kept, each new page gets a layout sized by its panels' weights, and a lettered page is lettered again.",
+        args: { page: "page number", after: "panel ids, comma separated: the LAST panel that stays on each page" }, check: hasPage, label: (a) => `Spread page ${a.page} over ${asIds(a.after).length + 1} pages`, run: asSplit },
+      move_panel: { desc: "Move the LAST panel of a page to the start of the next page, or the FIRST panel to the end of the previous page (a new page is made when there is none). Free, at once; both pages are laid out again.",
+        args: { panel: "panel id", to: "next | previous" }, check: hasPanel, label: (a) => `Move panel ${a.panel} to the ${/^next/i.test(String(a.to)) ? "next" : "previous"} page`, run: asMove },
+      join_pages: { desc: "Put a page and the page after it together as one page (at most 8 panels). Free, at once.", args: { page: "the first of the two pages" }, check: hasPage, label: (a) => `Join page ${a.page} with the page after it`, run: asJoin },
+      layout_page: { desc: "Lay one page out again: the panel director picks the layout that fits the panels' weights (the heaviest panel is the biggest), or give a layout code. Free, at once. Panels, pictures and balloons are kept.",
+        args: { page: "page number", code: "optional layout code" }, check: hasPage, label: (a) => `Lay out page ${a.page} again${a.code ? " (" + a.code + ")" : ""}`, run: asLayout },
+      edit_panel: { desc: "Change one panel's storyboard: what it shows (action), the shot (for example close-up, wide), its job (establish | talk | act | react | insert | big) or its weight (1 a tiny beat to 5 the big moment). Give only what changes. The spoken lines are the script's own words and cannot be changed here. Free, at once; a drawn picture stays until it is drawn again.",
+        args: { panel: "panel id", action: "optional: what the panel shows", shot: "optional", job: "optional", weight: "optional, 1 to 5" }, check: hasPanel, label: (a) => `Change panel ${a.panel}: ${["action", "shot", "job", "weight"].filter((k) => a[k] != null && String(a[k]).trim()).join(", ") || "nothing given"}`, run: asEditPanel },
+      draw_panel: { desc: "Draw or redraw one panel with the picture model in use. note = the person's direction, added to the Artist's prompt (keeps the storyboard). prompt = a whole new prompt instead (only when asked).", args: { panel: "panel id", note: "optional direction", prompt: "optional whole prompt" }, check: hasPanel,
         paid: true, cost: (a) => { try { return costOf([a.panel]); } catch (e) { return 0; } }, label: (a) => `Draw panel ${a.panel}${a.note ? ": " + String(a.note).slice(0, 60) : ""}`,
         run: async (a) => { if (!canDraw()) throw new Error("Drawing needs Ibasho running on your computer."); openPanel(a.panel); const d = draftFor(a.panel);
           if (a.prompt) { d.mode = "custom"; d.custom = String(a.prompt); } else if (a.note) { if (d.mode === "artist") d.artist = d.artist.replace(/\n\nNOTE FROM THE AUTHOR:[\s\S]*$/, "") + "\n\nNOTE FROM THE AUTHOR (it wins over anything above it contradicts): " + String(a.note); else d.custom = (d.custom + "\n" + String(a.note)).trim(); }
           await sendRequest(true); return "Queued: it lands in the panel when it is drawn."; } },
-      storyboard_again: { desc: "Run the Paneler again on this chapter with a note (pages and panels are rebuilt; pictures stay in the art list)", args: { note: "what to change" }, label: (a) => `Storyboard again${a.note ? ": " + String(a.note).slice(0, 60) : ""}`,
-        run: async (a) => { if (!(await okToWrite())) throw new Error("Not started."); const r = await fetch("/api/storyboard?p=" + encodeURIComponent(proj.id), { method: "POST", body: JSON.stringify({ note: String(a.note || "") }) }); if (!r.ok) throw new Error("The Paneler could not start (only chapters made in the app can be storyboarded again)."); return "Started: the new storyboard appears when it is done."; } },
+      storyboard_again: { desc: "LAST RESORT: run the Paneler again on the WHOLE chapter with a note. EVERY page and panel is rebuilt, it takes about six minutes, and lettering and hand changes are lost (pictures stay in the art list). Never use it to change one page or a few panels: use split_page, move_panel, join_pages, layout_page or edit_panel.", args: { note: "what to change" }, label: (a) => `Storyboard the WHOLE chapter again${a.note ? ": " + String(a.note).slice(0, 60) : ""}`,
+        run: async (a) => {
+          const pages = spec.pages.filter((p) => !p.cover).length, drawn = spec.pages.reduce((n, p) => n + (p.layout ? leaves(p.layout.rows).filter((q) => q.image).length : 0), 0), balloons = spec.pages.reduce((n, p) => n + (p.text || []).length, 0);
+          if (!confirm(`Storyboard the WHOLE chapter again?\n\nAll ${pages} pages are rebuilt by the Paneler. It takes about six minutes.` + (balloons ? `\n${balloons} placed balloons and any layout changes made by hand are lost.` : "") + (drawn ? `\n${drawn} drawn pictures stay in the art list, but may not land on the same panels.` : "") + "\n\nTo change one page, cancel and ask for that page only.")) throw new Error("Not started: you cancelled. Nothing changed.");
+          if (!(await okToWrite())) throw new Error("Not started."); const r = await fetch("/api/storyboard?p=" + encodeURIComponent(proj.id), { method: "POST", body: JSON.stringify({ note: String(a.note || "") }) }); if (!r.ok) throw new Error("The Paneler could not start (only chapters made in the app can be storyboarded again)."); return "Started. Nothing has changed yet: the new storyboard loads by itself when it is done, in about six minutes."; } },
     } });
   }
   async function queuePage(which) {
@@ -1436,7 +1708,8 @@
     const rotWrap = $("rotWrap"); rotWrap.hidden = R.KINDS[kind].shape !== "none";
     setVal("rotIn", it.rotate != null ? it.rotate : R.KINDS[kind].rotate || 0); $("rotOut").textContent = $("rotIn").value + "°";
     $("tailChk").checked = !!it.tail; $("tailChk").disabled = !R.TAIL_KINDS.has(kind);
-    $("joinChk").checked = !!it.join; $("bleedChk").checked = !!it.bleed;
+    $("joinChk").checked = !!it.join; $("bleedChk").checked = !!it.bleed; $("bridgeChk").checked = !!it.bridge; $("hollowChk").checked = !!it.hollow;
+    { const sfx = kind === "sfx"; $("hollowChk").closest("label").hidden = !sfx; $("bridgeChk").closest("label").hidden = sfx || !R.bridgeSpot(page(), it); $("joinChk").closest("label").hidden = sfx; $("tailChk").closest("label").hidden = sfx; $("sizeIn").max = sfx ? 4 : 1.8; }
     $("anchorWrap").hidden = !page().layout;
     $("anchorChk").checked = !!page().layout && !it.free;
     const ap = it.panel && findPanel(it.panel);
@@ -1463,10 +1736,21 @@
     $("layoutTools").hidden = !p.layout;
     if (!p.layout) return;
     const found = findPanel(selP), panel = found ? found.panel : null;
+    { const b = selB && findBo(selB), ask = !b && panel && panel.board && panel.board.breakout && !breakouts(p).some((x) => x.panel === panel.id);
+      $("boTools").hidden = !b; $("boBtn").hidden = store.kind !== "local" || !!b;
+      $("boAsk").hidden = !ask; if (ask) $("boAsk").textContent = `The storyboard asks for a break-out on this panel: “${panel.board.breakout}”. Press + Break-out to add it.`;
+      if (b) { const j = boJob(b), busy = boBusy(b);
+        $("boInfo").textContent = `${b.who || "A figure"}${b.action ? ": " + b.action : ""} · ${busy ? (j.status === "drawing" ? "Codex is drawing it…" : "waiting its turn to be drawn") : j && j.status === "failed" ? "not drawn: " + (j.msg || "it failed") : b.image ? "drawn" : "not drawn yet"}`;
+        $("boDraw").textContent = b.image ? "Draw it again" : "Draw it"; $("boDraw").disabled = busy || !canDraw(); $("boDraw").classList.toggle("primary", !b.image); $("boFlip").disabled = !b.image; } }
     $("splitRow").hidden = !!(found && found.inset);
     $("panelTools").hidden = !panel;
-    $("layoutHint").hidden = !!panel;
+    $("layoutHint").hidden = !!panel || !!selB;
+    $("freeBtn").textContent = placing ? `Done (${placing.length} corner${placing.length === 1 ? "" : "s"})` : "+ Free-shape panel"; $("freeBtn").classList.toggle("primary", !!placing); $("freeCancel").hidden = !placing;
     if (panel) {
+      { const has = R.validShape(panel.shape);
+        $("pshapes").innerHTML = `<button type="button" class="seg" data-pshape="" aria-pressed="${!has}">Plain</button>` + Object.entries(R.SHAPES).map(([k, v]) => `<button type="button" class="seg" data-pshape="${k}" aria-pressed="${has && JSON.stringify(panel.shape) === JSON.stringify(v.make())}">${v.label}</button>`).join("") + (has && !Object.values(R.SHAPES).some((v) => JSON.stringify(panel.shape) === JSON.stringify(v.make())) ? `<button type="button" class="seg" aria-pressed="true" disabled>My own</button>` : "");
+        $("shapeEdit").textContent = shaping ? "Done with corners" : "Edit corners"; $("shapeEdit").setAttribute("aria-pressed", shaping); $("shapeHint").hidden = !shaping;
+        $("shapeDel").hidden = !shaping || selV < 0 || !has || panel.shape.length <= 3; }
       $("ptypes").innerHTML = Object.entries(R.PANEL_TYPES).map(([k, v]) => `<button type="button" class="seg" data-ptype="${k}" aria-pressed="${(panel.type || "framed") === k}">${v}</button>`).join("");
       $("pbgField").hidden = !panel.board; $("psplash").checked = !!(panel.board && panel.board.splash);
       $("pjobField").hidden = !panel.board || !window.Director;
@@ -1482,21 +1766,25 @@
     }
     $("tray").innerHTML = (spec.library || []).map((it) =>
       `<button type="button" class="thumb" data-src="${R.esc(it.src)}" aria-pressed="${!!panel && panel.image === it.src}" title="${R.esc(it.label)}"><img src="${R.esc(BASE + it.src)}" alt="${R.esc(it.label)}" loading="lazy"></button>`).join("");
-    const counts = [...new Set((spec.templates || []).map((t) => leaves(t.rows).length))].sort((a, b) => a - b);
-    $("tmplFilters").innerHTML = ["all", ...counts].map((c) => `<button type="button" class="seg" data-tf="${c}" aria-pressed="${String(tmplFilter) === String(c)}">${c === "all" ? "All" : c}</button>`).join("");
+    const counts = [...new Set(T().map((t) => leaves(t.rows).length))].sort((a, b) => a - b);
+    const isOwn = (t) => ownLayouts.includes(t), hasStrip = (t) => (t.rows || []).some((r) => r.strip);
+    if ((tmplFilter === "mine" && !ownLayouts.length) || (tmplFilter === "strip" && !T().some(hasStrip))) tmplFilter = "all";
+    $("tmplFilters").innerHTML = ["all", ...counts, ...(T().some(hasStrip) ? ["strip"] : []), ...(ownLayouts.length ? ["mine"] : [])].map((c) => `<button type="button" class="seg" data-tf="${c}" aria-pressed="${String(tmplFilter) === String(c)}">${c === "all" ? "All" : c === "mine" ? "Mine" : c === "strip" ? "Strips" : c}</button>`).join("");
+    $("tmplSave").hidden = store.kind !== "local";
     if (!$("tmplDetails").open) return;
-    const list = (spec.templates || []).filter((t) => tmplFilter === "all" || leaves(t.rows).length === +tmplFilter);
+    const list = T().filter((t) => tmplFilter === "all" || (tmplFilter === "mine" ? isOwn(t) : tmplFilter === "strip" ? hasStrip(t) : leaves(t.rows).length === +tmplFilter));
     // the panel director: layouts with this page's number of panels come first, best fit for the panels' weights first;
     // an even grid or upright gutters that line up are marked (they read as a grid, not as manga)
     const D = window.Director, mine = leaves(p.layout.rows), fit = new Map();
-    if (D && mine.length > 1) D.sorted(mine, spec.templates || [], R, { avoid: neighbourShapes() }).forEach((x, i) => fit.set(x.template.code, Object.assign({ rank: i }, x)));
+    if (D && mine.length > 1) D.sorted(mine, T(), R, { avoid: neighbourShapes() }).forEach((x, i) => fit.set(x.template.code, Object.assign({ rank: i }, x)));
     const weighted = mine.some((q) => q.board && (q.board.weight || q.board.job || q.board.splash));
     $("tmplPick").hidden = !fit.size; $("tmplHint").hidden = !fit.size;
     if (fit.size) $("tmplHint").textContent = weighted ? `Layouts with ${mine.length} panels are listed best fit first for this page's weights. Faded ones are an even grid or have upright gutters that line up.` : `Give the panels a job and a weight (tap a panel) and the best layout for this page is listed first. Faded ones are an even grid or have upright gutters that line up.`;
     const rate = (t) => { const f = fit.get(t.code); if (f) return f.rating; try { return D ? D.rate(t.rows, R) : null; } catch (e) { return null; } };
     const order = list.slice().sort((a, b) => (fit.has(a.code) ? fit.get(a.code).rank : 1e6) - (fit.has(b.code) ? fit.get(b.code).rank : 1e6));
     $("tmplGrid").innerHTML = order.map((t) => { const rt = rate(t), fault = rt && (rt.even ? "an even grid" : rt.aligned ? "upright gutters line up" : ""), f = fit.get(t.code);
-      return `<button type="button" class="tmpl" data-tmpl="${R.esc(t.code)}"${fault ? ` data-fault="1"` : ""}${f && f.rank === 0 && weighted ? ` data-best="1"` : ""} title="${R.esc(t.code + " · " + t.name + (f && f.rank === 0 && weighted ? " · best fit for this page's weights" : "") + (fault ? " · " + fault : ""))}">${miniLayout(f ? f.rows : t.rows)}<span>${R.esc(t.code)}</span></button>`; }).join("");
+      return `<button type="button" class="tmpl" data-tmpl="${R.esc(t.code)}"${fault ? ` data-fault="1"` : ""}${f && f.rank === 0 && weighted ? ` data-best="1"` : ""} title="${R.esc(t.code + " · " + t.name + (f && f.rank === 0 && weighted ? " · best fit for this page's weights" : "") + (fault ? " · " + fault : ""))}">${miniLayout(f ? f.rows : t.rows)}<span>${R.esc(t.code)}</span></button>` + (tmplFilter === "mine" ? `<button type="button" class="btn link tmpl-x" data-tmpl-del="${R.esc(t.code)}" aria-label="Remove your layout ${R.esc(t.code)}">Remove</button>` : ""); }).join("");
+    $("tmplGrid").dataset.mine = tmplFilter === "mine" ? "1" : "";
   }
 
   function setVal(id, v) { const el = $(id); if (document.activeElement !== el) el.value = v; }
@@ -1512,6 +1800,7 @@
       crowd: '<ellipse cx="11" cy="12" rx="7" ry="5"/><ellipse cx="22" cy="19" rx="7" ry="5"/>',
       phone: '<rect x="5" y="7" width="22" height="16" rx="4"/><rect x="8" y="10" width="16" height="10" rx="2"/>',
       title: '<path d="M6 9 H26 M16 9 V25" />',
+      sfx: '<path d="M4 22 L7 9 L12 17 L15 6 L19 16 L23 8 L28 21" stroke-width="3.2" stroke-linejoin="round"/>',
     }[k];
     return `<svg viewBox="0 0 32 32" aria-hidden="true">${s}</svg>`;
   }
@@ -1638,7 +1927,16 @@
       const p = page();
       if (!p.layout) return;
       const part = t.dataset && t.dataset.part;
-      if (gut) {
+      if (placing) { // a new free-shape panel: each tap is a corner; a tap on the first corner closes it
+        if (placing.length >= 3 && Math.hypot((x - placing[0][0]) * W, (y - placing[0][1]) * H) < 34) return finishFree();
+        if (placing.length < 64) placing.push([round3(clamp01(x)), round3(clamp01(y))]);
+        render(); setStatus(placing.length < 3 ? `${placing.length} corner${placing.length === 1 ? "" : "s"}. Tap the page for the next one.` : `${placing.length} corners. Tap the first one again, or press Done, to close the shape.`); return;
+      }
+      if (part === "vtx" || part === "vadd") {
+        const S = ownShape(); if (!S) return; const sh = S.c.panel.shape; let k = +t.dataset.k;
+        if (part === "vadd") { sh.splice(k + 1, 0, toShape(S, x, y)); k = k + 1; }
+        selV = k; drag = { mode: "vtx", k, x, y, moved: part === "vadd", cap: capture() };
+      } else if (gut) {
         const path = gut.dataset.path ? gut.dataset.path.split(",").map(Number) : [];
         const rows = rowsAt(path), r = +gut.dataset.r, k = +gut.dataset.k, col = gut.dataset.gut === "col";
         const G = R.layoutGeom(p.layout), same = (q) => q.path.join(",") === path.join(",") && q.r === r && (!col || q.k === k);
@@ -1649,12 +1947,17 @@
       } else if (part === "imove" || part === "iresize") {
         const f = findPanel(t.dataset.pid);
         drag = { mode: part, id: t.dataset.pid, x, y, box: f.panel.box.slice(), moved: false, cap: capture() };
+      } else if (t.dataset && t.dataset.bo) { // a break-out: its body or top-left dot moves it, its bottom-right dot resizes it
+        const b = findBo(t.dataset.bo); if (!b) return;
+        selB = b.id; selP = null;
+        drag = { mode: part === "bresize" ? "bresize" : "bmove", id: b.id, x, y, box: b.box.slice(), moved: false, cap: capture() };
       } else if (t.dataset && t.dataset.pid) {
+        selB = null; if (selP !== t.dataset.pid) selV = -1;
         selP = t.dataset.pid;
         const c = geomById(p).get(selP);
         const cw = R.cropWindow(c.panel, c.bbox[2] - c.bbox[0], c.bbox[3] - c.bbox[1], sizes()[c.panel.image]);
         drag = { mode: "pan", x, y, f: (c.panel.focus || [0.5, 0.5]).slice(), c: cw, moved: false, cap: capture() };
-      } else { selP = null; render(); return; }
+      } else { selP = null; selB = null; render(); return; }
       $("page").setPointerCapture(ev.pointerId);
       ev.preventDefault();
       render();
@@ -1712,6 +2015,16 @@
         b[0] = Math.min(Math.max(b[0] + dx, 0), 1 - w); b[1] = Math.min(Math.max(b[1] + dy, 0), 1 - h); b[2] = b[0] + w; b[3] = b[1] + h;
       } else { b[2] = Math.min(Math.max(b[2] + dx, b[0] + 0.08), 1); b[3] = Math.min(Math.max(b[3] + dy, b[1] + 0.06), 1); }
       f.panel.box = b.map(round3);
+    } else if (drag.mode === "vtx") {
+      const S = shapeCorners(); if (!S || !R.validShape(S.c.panel.shape) || !S.c.panel.shape[drag.k]) return;
+      S.c.panel.shape[drag.k] = toShape(S, x, y);
+    } else if (drag.mode === "bmove" || drag.mode === "bresize") {
+      const bo = findBo(drag.id); if (!bo) return;
+      const b = drag.box.slice(), dx = x - drag.x, dy = y - drag.y;
+      if (drag.mode === "bmove") { const w = b[2] - b[0], h = b[3] - b[1]; b[0] = Math.min(Math.max(b[0] + dx, 0), 1 - w); b[1] = Math.min(Math.max(b[1] + dy, 0), 1 - h); b[2] = b[0] + w; b[3] = b[1] + h; }
+      else { const k = Math.max((b[2] - b[0] + dx) / (b[2] - b[0]), (b[3] - b[1] + dy) / (b[3] - b[1])), w = Math.min(Math.max((b[2] - b[0]) * k, 0.1), 1 - b[0]), h = (b[3] - b[1]) * w / (b[2] - b[0]); // its shape is kept
+        if (b[1] + h <= 1) { b[2] = b[0] + w; b[3] = b[1] + h; } }
+      bo.box = b.map(round3);
     } else if (drag.mode === "pan" && selP) {
       const f = findPanel(selP); if (!f || !f.panel.image) return;
       const c = drag.c, dxu = (x - drag.x) * W, dyu = (y - drag.y) * H;
@@ -1724,21 +2037,23 @@
   }
   /** The layouts of the pages on either side of this one (a page never repeats its neighbour's layout). */
   function neighbourShapes() { const D = window.Director; if (!D) return []; return [spec.pages[pageIdx - 1], spec.pages[pageIdx + 1]].filter((q) => q && q.layout && !q.cover).map((q) => D.shape(q.layout.rows)); }
-  function applyTemplate(code, byWeight) {
-    let t = (spec.templates || []).find((q) => q.code === code); const p = page(); if (!p.layout) return;
+  function applyTemplate(code, byWeight, quiet) {
+    let t = T().find((q) => q.code === code); const p = page(); if (!p.layout) return;
     const D = window.Director, mine = leaves(p.layout.rows);
     if (D && mine.length > 1) { // sized to this page's weights when the layout has this page's number of panels
-      const all = D.sorted(mine, spec.templates || [], R, { avoid: neighbourShapes() }), hit = byWeight ? all[0] : all.find((x) => x.template.code === code);
+      const all = D.sorted(mine, T(), R, { avoid: neighbourShapes() }), hit = byWeight ? all[0] : all.find((x) => x.template.code === code);
       if (hit) t = { code: hit.template.code, name: hit.template.name, rows: hit.rows };
     }
     if (!t) return;
     mutateLayout(() => {
       const old = leaves(p.layout.rows);
       let i = 0;
-      const build = (rows) => rows.map((r) => ({ h: r.h, panels: r.panels.map((q) => {
+      const build = (rows) => rows.map((r) => ({ h: r.h, ...(r.slant ? { slant: r.slant } : {}), ...(r.strip ? { strip: true } : {}), panels: r.panels.map((q) => {
         if (q.rows) return { w: q.w, rows: build(q.rows) };
         const o = old[i++] || {};
-        const n = { w: q.w, type: o.type || "framed" };
+        const n = { w: q.w, type: q.type || o.type || "framed" };
+        if (q.slant) n.slant = q.slant;
+        if (R.validShape(q.shape)) n.shape = q.shape.map((pt) => pt.slice()); // a shape belongs to the place in the layout, not to the panel that moves into it
         if (o.id) n.id = o.id;
         if (o.image) { n.image = o.image; if (o.focus) n.focus = o.focus; if (o.zoom) n.zoom = o.zoom; }
         for (const k of ["board", "take", "request", "inart"]) if (o[k] != null) n[k] = o[k]; // the panel's storyboard, its lines and a waiting request move with it
@@ -1746,8 +2061,10 @@
       }) }));
       p.layout.rows = build(t.rows);
     });
+    if (quiet) return t;
     selP = null; render(); snap();
     setStatus(`Layout ${t.code} applied. Art and balloons kept in reading order.`);
+    return t;
   }
 
   function onUp() {
@@ -1767,7 +2084,9 @@
 
   function addBalloon(kind) {
     const k = R.KINDS[kind];
-    const it = { kind, speaker: "", text: kind === "ambient" ? "…" : "New line", at: [0.5, 0.45] };
+    const it = { kind, speaker: "", text: kind === "ambient" ? "…" : kind === "sfx" ? "KRAK" : "New line", at: [0.5, 0.45] };
+    if (kind === "sfx") { const q = selP && findPanel(selP), c = q && geomById(page()).get(selP), heard = q && q.panel.inart && q.panel.inart.sfx; // into the chosen panel, with the sound the storyboard names
+      if (c) it.at = [round3((c.bbox[0] + c.bbox[2]) / 2 / W), round3((c.bbox[1] + c.bbox[3]) / 2 / H)]; if (heard) it.text = String(heard).slice(0, 40); }
     if (R.TAIL_KINDS.has(kind)) it.tail = [0.5, 0.53];
     if (k.width) it.width = k.width;
     items().push(it);
@@ -1792,7 +2111,7 @@
     if (p.layout) {
       const map = {};
       const all = leaves(p.layout.rows).concat(p.layout.insets || []);
-      for (const q of all) if (q.image && !map[q.image]) map[q.image] = await dataUrl(BASE + q.image);
+      for (const src of R.pictures(p)) if (!map[src]) map[src] = await dataUrl(BASE + src); // panel art (or the Toner's picture of it) and break-outs
       artSvg = R.layoutSvg(p, (s) => map[s], sizes());
     } else {
       artSvg = `<image href="${await dataUrl(BASE + p.art)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`;
@@ -1807,21 +2126,52 @@
     URL.revokeObjectURL(url);
     return await new Promise((res) => c.toBlob(res, "image/png"));
   }
-  /** Every page of the chapter, saved on the computer running the editor, with a list to open or download them. */
-  async function exportChapter() {
-    const btn = $("exportAllBtn"); btn.disabled = true;
+  /** Export: one dialog for a page, some pages or the chapter, as a PDF, PNGs or JPEGs.
+   *  The browser draws each page (so the file is what the editor shows), the server keeps the PNGs and builds the download. */
+  const ex = { format: "pdf", size: "full", sets: false, picked: new Set(), busy: false };
+  const exLabel = (p, i) => (p.cover ? "Cover" : String(p.number != null ? p.number : i + 1));
+  function exPaint() {
+    for (const b of $("exFormat").children) b.setAttribute("aria-pressed", b.dataset.format === ex.format);
+    for (const b of $("exSize").children) b.setAttribute("aria-pressed", b.dataset.size === ex.size);
+    const n = ex.picked.size, rtl = spec.reading === "rtl";
+    $("exFormatHint").textContent = ex.format === "pdf" ? `One file, pages in reading order${spec.pages.some((p) => p.cover) ? ", the cover first" : ""}. Made for reading on a screen${rtl ? "; it is marked to open right to left" : ""}.`
+      : ex.format === "png" ? "The sharpest pictures and the biggest files. More than one page comes as a zip." : "Smaller files, good for posting. More than one page comes as a zip.";
+    $("exSizeRow").hidden = false; $("exSetsRow").hidden = ex.format === "pdf" || n < 2; $("exSets").checked = ex.sets;
+    for (const b of $("exPages").children) b.setAttribute("aria-pressed", ex.picked.has(+b.dataset.i));
+    $("exCount").textContent = `${n} of ${spec.pages.length}`;
+    $("exGo").disabled = !n || ex.busy; if (!ex.busy) $("exGo").textContent = n === 1 ? "Export 1 page" : `Export ${n} pages`;
+  }
+  function openExport(only) {
+    try { const m = JSON.parse(localStorage.getItem("ibasho-export") || "{}"); if (["pdf", "png", "jpeg"].includes(m.format)) ex.format = m.format; if (m.size === "web" || m.size === "full") ex.size = m.size; ex.sets = !!m.sets; } catch (e) { /* no memory of the last choice */ }
+    ex.picked = new Set(only != null ? [only] : spec.pages.map((_, i) => i));
+    $("exDlgT").textContent = only != null ? "Export this page" : "Export the chapter";
+    $("exPages").innerHTML = spec.pages.map((p, i) => `<button type="button" class="btn" data-i="${i}" title="${R.esc(p.label || "Page " + exLabel(p, i))}">${R.esc(exLabel(p, i))}</button>`).join("");
+    exPaint(); const dlg = $("exDlg"); if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
+  }
+  async function runExport() {
+    const idx = [...ex.picked].sort((a, b) => a - b), whole = idx.length === spec.pages.length, go = $("exGo");
+    try { localStorage.setItem("ibasho-export", JSON.stringify({ format: ex.format, size: ex.size, sets: ex.sets })); } catch (e) { /* not kept */ }
+    ex.busy = true; exPaint();
     try {
-      await fetch("/api/exports?p=" + encodeURIComponent(proj.id), { method: "DELETE" });
-      for (let i = 0; i < spec.pages.length; i++) {
-        const p = spec.pages[i];
-        btn.textContent = `Exporting page ${i + 1} of ${spec.pages.length}…`;
+      if (whole) await fetch("/api/exports?p=" + encodeURIComponent(proj.id), { method: "DELETE" }); // pages left over from a longer storyboard go
+      for (let k = 0; k < idx.length; k++) {
+        const i = idx[k], p = spec.pages[i];
+        go.textContent = `Drawing page ${k + 1} of ${idx.length}…`;
         const blob = await pageBlob(p, p.text.map((it) => R.measure(it, spec, measureText)));
         const r = await fetch(`/api/export?p=${encodeURIComponent(proj.id)}&name=page-${String(i + 1).padStart(2, "0")}.png`, { method: "POST", body: blob });
         if (!r.ok) throw new Error("save");
       }
-      setStatus(`Exported ${spec.pages.length} page${spec.pages.length === 1 ? "" : "s"}.`, "ok");
-    } catch (e) { setStatus("The chapter export did not finish. Try again.", "error"); }
-    btn.disabled = false; btn.textContent = "Export the chapter";
+      go.textContent = "Making the file…";
+      const q = new URLSearchParams({ p: proj.id, format: ex.format, size: ex.size, title: `${spec.project} · Chapter ${spec.chapter}` });
+      if (!whole) q.set("pages", idx.map((i) => i + 1).join(","));
+      if (spec.reading === "rtl") q.set("rtl", "1");
+      if (ex.sets && ex.format !== "pdf" && idx.length > 1) q.set("sets", "20");
+      const r = await fetch("/api/export-file?" + q); if (!r.ok) throw new Error(await r.text());
+      const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || proj.id + "." + ex.format;
+      const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob()); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      $("exDlg").close(); setStatus(`Exported ${idx.length} page${idx.length === 1 ? "" : "s"}: ${name}`, "ok");
+    } catch (e) { setStatus("The export did not finish. Try again." + (e && e.message && e.message !== "save" && e.message.length < 160 ? " (" + e.message + ")" : ""), "error"); }
+    ex.busy = false; exPaint();
     renderExports();
   }
   async function renderExports() {
@@ -1831,8 +2181,7 @@
     let list = []; try { list = await (await fetch("/api/exports?p=" + encodeURIComponent(proj.id))).json(); } catch (e) { return; }
     if (!list.length || mode !== "chapter") return;
     box.hidden = false;
-    box.innerHTML = `<div class="chap-top"><div><h2>Exported pages</h2><p>${list.length} PNG${list.length === 1 ? "" : "s"}, 2048 × 3072, exported ${R.esc(new Date(list[0].at).toLocaleString())}. Tap one to open it and save it, or take them all.</p></div>` +
-      `<a class="btn primary" href="/api/export-zip?p=${encodeURIComponent(proj.id)}">Download all (zip)</a><a class="btn" href="/api/export-x?p=${encodeURIComponent(proj.id)}">Download for X (JPEG, sets of 20)</a></div>` +
+    box.innerHTML = `<div class="chap-top"><div><h2>Exported pages</h2><p>${list.length} page${list.length === 1 ? "" : "s"}, last exported ${R.esc(new Date(Math.max(...list.map((f) => f.at))).toLocaleString())}. Tap one to open it. Export gives them as a PDF, PNGs or JPEGs.</p></div></div>` +
       `<div class="exp-grid">${list.map((f) => `<a href="${R.esc(f.url)}" target="_blank" rel="noopener"><img src="${R.esc(f.url)}?t=${f.at}" alt="${R.esc(f.name)}" loading="lazy"><span>${R.esc(f.name)}</span></a>`).join("")}</div>`;
   }
   async function exportPng() {
@@ -1943,6 +2292,8 @@
         refs: JSON.parse(JSON.stringify(r.refList || (r.refs || []).map(bankRef))), refsTouched: true,
         tagsOnly: (r.tags || []).filter((k) => !(r.refList || []).some((x) => refTagKey(x) === k)).map((k) => { const i = k.indexOf("|"); return { kind: k.slice(0, i), name: k.slice(i + 1) }; }) };
       delete f.panel.request; render(); snap(); setStatus("Request cancelled.");
+      if (canDraw()) { const pid = selP; fetch(`/api/generate?p=${encodeURIComponent(proj.id)}&panel=${encodeURIComponent(pid)}`, { method: "DELETE" }).then(async (r) => { // the request is kept with the job on the server: take it out of the line there too
+        if (r.status === 409) setStatus("That picture is being drawn right now and cannot be stopped. It will land; you can ask for another after it.", "warn"); else delete jobs[pid]; }).catch(() => { /* offline: the job runs */ }); }
     });
     $("projSel").addEventListener("change", (e) => { loadProject(e.target.value).catch(() => setStatus("That project could not load.", "error")); });
     $("chapterGrid").addEventListener("click", (e) => { const b = e.target.closest("[data-open]"); if (!b) return; pageIdx = +b.dataset.open; mode = "letter"; sel = -1; selP = null; render(); window.scrollTo(0, 0); });
@@ -2006,6 +2357,13 @@
       editPanel((q) => { q.board = q.board || {}; if (on) q.board.splash = true; else delete q.board.splash; });
       const d = drafts[pid], now = aiPrompt(pid); if (d && old && now && d.artist === old.prompt) d.artist = now.prompt; });
     $("ptypes").addEventListener("click", (e) => { const b = e.target.closest("[data-ptype]"); if (!b) return; editPanel((q) => { q.type = b.dataset.ptype; }); });
+    $("pshapes").addEventListener("click", (e) => { const b = e.target.closest("[data-pshape]"); if (!b) return; const k = b.dataset.pshape; selV = -1;
+      editPanel((q) => { if (k && R.SHAPES[k]) q.shape = R.SHAPES[k].make(); else delete q.shape; }); if (!k) shaping = false; render();
+      setStatus(k ? `${R.SHAPES[k].label} shape. Press Edit corners to change it by hand.` : "Back to the plain panel.", "ok"); });
+    $("shapeEdit").addEventListener("click", () => { shaping = !shaping; selV = -1; render(); });
+    $("shapeDel").addEventListener("click", () => { const k = selV; selV = -1; editPanel((q) => { if (R.validShape(q.shape) && q.shape.length > 3 && q.shape[k]) q.shape.splice(k, 1); }); });
+    $("freeBtn").addEventListener("click", () => { if (placing) return finishFree(); const p = page(); if (!p.layout) return; placing = []; selP = null; selB = null; shaping = false; render(); setStatus("Tap the page to place each corner of the new panel, going round its edge. Tap the first corner again, or press Done, to close it."); });
+    $("freeCancel").addEventListener("click", () => { placing = null; render(); setStatus("No panel added."); });
     $("zoomIn").addEventListener("input", (e) => editPanel((q) => { q.zoom = +e.target.value; }, false));
     $("zoomIn").addEventListener("change", () => snap());
     $("tray").addEventListener("click", (e) => {
@@ -2051,6 +2409,26 @@
       }
       selP = null;
     }));
+    $("tonePage").addEventListener("click", () => tonePages([page()]));
+    $("toneOne").addEventListener("click", () => tonePages([page()], selP));
+    $("toneAllBtn").addEventListener("click", () => tonePages(spec.pages));
+    $("toneHand").addEventListener("click", openToneHand);
+    $("toneTools").addEventListener("click", (e) => { const b = e.target.closest("[data-tool]"); if (b) { TH.tool = b.dataset.tool; thPaint(); } });
+    $("toneSize").addEventListener("input", thPaint);
+    $("toneUndo").addEventListener("click", () => { TH.strokes.pop(); TH.shown = Math.min(TH.shown, TH.strokes.length); TH.dirty = true; thPaint(); $("toneNote").textContent = "Undone. Press Save to see the picture without it."; });
+    $("toneClear").addEventListener("click", () => { TH.strokes = []; TH.shown = 0; TH.dirty = true; thPaint(); $("toneNote").textContent = "Every stroke is off. Press Save for the tone as the Toner made it."; });
+    $("toneSave").addEventListener("click", saveToneHand);
+    $("toneDlgX").addEventListener("click", () => { if (!TH.dirty || confirm("Close without saving these strokes?")) $("toneDlg").close(); });
+    { const cv = $("toneCanvas"), at = (e) => { const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / r.width * TH.size[0] * 10) / 10, Math.round((e.clientY - r.top) / r.height * TH.size[1] * 10) / 10]; };
+      cv.addEventListener("pointerdown", (e) => { if (TH.saving) return; cv.setPointerCapture(e.pointerId); TH.cur = { tool: TH.tool, size: +$("toneSize").value, points: [at(e)] }; thPaint(); e.preventDefault(); });
+      cv.addEventListener("pointermove", (e) => { if (!TH.cur) return; const q = at(e), l = TH.cur.points[TH.cur.points.length - 1]; if (Math.hypot(q[0] - l[0], q[1] - l[1]) > 6 && TH.cur.points.length < 2000) { TH.cur.points.push(q); thPaint(); } });
+      const end = () => { if (!TH.cur) return; if (TH.strokes.length < 400) { TH.strokes.push(TH.cur); TH.dirty = true; } TH.cur = null; thPaint(); };
+      cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end); }
+    $("boBtn").addEventListener("click", addBreakout);
+    $("boDraw").addEventListener("click", () => { const b = findBo(selB); if (b) drawBo(b); });
+    $("boEdit").addEventListener("click", () => { const b = findBo(selB); if (!b || !boWords(b)) return; render(); snap(); setStatus("Changed. Press Draw it again for a new picture.", "ok"); });
+    $("boFlip").addEventListener("click", () => { const b = findBo(selB); if (!b) return; if (b.flip) delete b.flip; else b.flip = true; render(); snap(); });
+    $("boRemove").addEventListener("click", () => { const p = page(), b = findBo(selB); if (!b) return; p.layout.breakouts = p.layout.breakouts.filter((x) => x !== b); if (!p.layout.breakouts.length) delete p.layout.breakouts; selB = null; render(); snap(); setStatus("The break-out is removed. Undo brings it back.", "ok"); });
     $("insetBtn").addEventListener("click", () => {
       const p = page(); if (!p.layout) return;
       const n = { id: newId(), box: [0.56, 0.07, 0.92, 0.3], type: "framed" };
@@ -2061,7 +2439,8 @@
     $("anchorChk").addEventListener("change", (e) => edit((it) => { if (e.target.checked) { delete it.free; assignPanel(page(), it); } else { it.free = true; delete it.panel; } }));
     $("tmplDetails").addEventListener("toggle", () => renderLayoutPanel());
     $("tmplFilters").addEventListener("click", (e) => { const b = e.target.closest("[data-tf]"); if (!b) return; tmplFilter = b.dataset.tf; renderLayoutPanel(); });
-    $("tmplGrid").addEventListener("click", (e) => { const b = e.target.closest("[data-tmpl]"); if (!b) return; applyTemplate(b.dataset.tmpl); });
+    $("tmplGrid").addEventListener("click", (e) => { const x = e.target.closest("[data-tmpl-del]"); if (x) return removeOwnLayout(x.dataset.tmplDel); const b = e.target.closest("[data-tmpl]"); if (!b) return; applyTemplate(b.dataset.tmpl); });
+    $("tmplSave").addEventListener("click", saveOwnLayout);
     $("kindGrid").addEventListener("click", (e) => {
       const b = e.target.closest("[data-kind]"); if (!b) return;
       edit((it) => {
@@ -2082,7 +2461,14 @@
     $("rotIn").addEventListener("change", () => snap());
     $("tailChk").addEventListener("change", (e) => edit((it) => { if (e.target.checked) it.tail = [it.at[0], Math.min(1, it.at[1] + 0.06)]; else delete it.tail; }));
     $("joinChk").addEventListener("change", (e) => edit((it) => { if (e.target.checked) it.join = true; else delete it.join; }));
-    $("bleedChk").addEventListener("change", (e) => edit((it) => { if (e.target.checked) it.bleed = true; else delete it.bleed; }));
+    $("bleedChk").addEventListener("change", (e) => edit((it) => { if (e.target.checked) it.bleed = true; else { delete it.bleed; delete it.bridge; } }));
+    $("hollowChk").addEventListener("change", (e) => edit((it) => { if (e.target.checked) it.hollow = true; else delete it.hollow; }));
+    $("bridgeChk").addEventListener("change", (e) => { edit((it) => {
+      if (!e.target.checked) { delete it.bridge; return; }
+      const spot = R.bridgeSpot(page(), it); if (!spot) return;
+      const dx = spot[0] / W - it.at[0], dy = spot[1] / H - it.at[1]; it.at = [round3(spot[0] / W), round3(spot[1] / H)]; if (it.tail) it.tail = [round3(clamp01(it.tail[0] + dx * 0.4)), round3(clamp01(it.tail[1] + dy * 0.4))]; // the tail still points at the speaker
+      it.bridge = true; it.bleed = true;
+    }); if (e.target.checked) setStatus("The balloon sits on the border to the next panel. Drag it along the border to place it.", "ok"); }); // said after the edit, or "Saving…" would replace it
     $("voiceBtn").addEventListener("click", () => {
       const it = items()[sel]; if (!it || !it.speaker) return;
       spec.voices = spec.voices || {};
@@ -2112,8 +2498,17 @@
     $("undoBtn").addEventListener("click", undo);
     $("redoBtn").addEventListener("click", redoFn);
     $("guidesChk").addEventListener("change", (e) => { guides = e.target.checked; render(); });
-    $("exportBtn").addEventListener("click", exportPng);
-    $("exportAllBtn").addEventListener("click", exportChapter);
+    $("exportBtn").addEventListener("click", () => (store.kind === "local" && proj && proj.id ? openExport(mode === "chapter" ? undefined : pageIdx) : exportPng())); // away from the app's own server there is one PNG, as before
+    $("exportAllBtn").addEventListener("click", () => openExport());
+    $("exFormat").addEventListener("click", (e) => { const b = e.target.closest("[data-format]"); if (b) { ex.format = b.dataset.format; exPaint(); } });
+    $("exSize").addEventListener("click", (e) => { const b = e.target.closest("[data-size]"); if (b) { ex.size = b.dataset.size; exPaint(); } });
+    $("exPages").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (!b) return; const i = +b.dataset.i; if (ex.picked.has(i)) ex.picked.delete(i); else ex.picked.add(i); exPaint(); });
+    $("exAll").addEventListener("click", () => { ex.picked = new Set(spec.pages.map((_, i) => i)); exPaint(); });
+    $("exNone").addEventListener("click", () => { ex.picked = new Set(); exPaint(); });
+    $("exSets").addEventListener("change", (e) => { ex.sets = e.target.checked; });
+    $("exGo").addEventListener("click", runExport);
+    $("exDlgX").addEventListener("click", () => $("exDlg").close()); $("exCancel").addEventListener("click", () => $("exDlg").close());
+    $("exDlg").addEventListener("click", (e) => { if (e.target === $("exDlg") && !ex.busy) $("exDlg").close(); });
     $("drawAllBtn").addEventListener("click", () => { const n = missingCount(); if (n > 12 && !confirm(`Draw ${n} pictures? That is about ${Math.round(n * 1.5)} minutes of drawing on your Codex plan.`)) return; drawChapter(); });
     $("checks").addEventListener("click", (e) => { const b = e.target.closest("[data-sel]"); if (!b) return; const i = +b.dataset.sel; if (i >= 0) { sel = i; render(); } });
     const reset = $("resetBtn");
@@ -2179,11 +2574,32 @@
       if (!canDraw() || f.id !== proj.id) return;
       const ids = []; for (const p of spec.pages) if (p.layout) { eachPanel(p.layout.rows, (q) => { if (q.request && !q.rows) ids.push(q.id); }); for (const q of p.layout.insets || []) if (q.request) ids.push(q.id); }
       if (ids.length) startJobs(ids); else pollJobs();
+      takeBreakouts(); // a break-out drawn while nobody had the project open lands now
+      takeTone();
       CK = null; loadCheck().then(() => { // pictures that landed while nobody had the project open are checked now, when this person wants that
         if (f.id !== proj.id || !CK || ckBusy() || ids.length || autoPref() !== "on" || !CK.drawn || !CK.changed.length) return;
         if (Object.values(jobs).some((j) => j.status === "waiting" || j.status === "drawing")) return;
         startCheck(); });
     });
+  }
+
+  // A tab that still holds an older storyboard (the chapter was storyboarded again from another tab, by the Assistant or by an agent)
+  // loads the new one by itself and says so. Before 19 Nov 2026 such a tab kept saving its old pages over the new ones (now refused by
+  // the server, 409), and nothing on screen said the new storyboard had landed.
+  let boardBusy = false;
+  async function watchBoard() {
+    if (boardBusy || store.kind !== "local" || !spec || !proj.id || !/^projects\//.test(proj.dir || "") || document.hidden) return;
+    boardBusy = true;
+    try {
+      const id = proj.id, info = await (await fetch("/api/project?p=" + encodeURIComponent(id))).json();
+      if (!info || !info.own || typeof info.boardAt !== "string" || !info.boardAt || info.boardAt === (spec.boardAt || "") || id !== proj.id) return;
+      const was = mode, lost = dirty || edited; dirty = false; clearTimeout(saveTimer); // this tab's pages belong to the old storyboard: they are not saved over the new one
+      await loadProject(id);
+      if (was === "home" || was === "book") { mode = was; inProject(false); }
+      render();
+      const say = () => { if (id === proj.id) setStatus(`The new storyboard is in (${spec.pages.length} pages) and this chapter was loaded again.` + (lost ? " Changes made here on the old pages were not kept." : ""), "ok"); };
+      say(); setTimeout(say, 1500); // loading the chapter ends with its own "Saved": the news goes last
+    } catch (e) { /* offline: try again next time */ } finally { boardBusy = false; }
   }
 
   async function boot() {
@@ -2203,6 +2619,8 @@
     if (store.kind === "local") { // the whole studio's queue, in the status bar
       const tick = async () => { /* the studio's "Working on" chip (studio.js) shows the whole queue now */ };
       tick(); setInterval(tick, 8000);
+      setInterval(watchBoard, 15000); document.addEventListener("visibilitychange", () => { if (!document.hidden) watchBoard(); });
+      window.addEventListener("ibasho-work-landed", () => setTimeout(watchBoard, 500)); // a storyboard (or anything else) just finished
     } else $("animeLink").hidden = true;
   }
   boot().catch(() => setStatus("The page could not load. Reload to try again.", "error"));

@@ -11,7 +11,7 @@ import { connections } from "./connections.mjs"; // sign-ins and API keys (Setti
 import { models, routeModel, estimate, refreshIfOld } from "./models.mjs";
 import { gpuPricesRoute } from "./gpu_prices.mjs"; // live GPU prices (RunPod, Vast.ai)
 import { spend, logSpend, guardSpend, okFrom } from "./spend.mjs";
-import { readBody, MB, KB } from "./limits.mjs";
+import { readBody, sentBadJson, MB, KB } from "./limits.mjs";
 import { codexRun, codexLook, jsonFrom, dataFile, DATA_RULE } from "./codex.mjs"; // untrusted text as data files; look-only jobs read-only // how much each route may be sent
 import { inside, reserved } from "./paths.mjs";
 import { lockDoc, writeAtomic, writeJson, updateJson } from "./store.mjs"; // one change at a time per document, written whole (audit item 11) // saved paths stay inside their folder; names that would reach every object
@@ -25,12 +25,13 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const SAVED = process.env.STUDIO_SAVED || join(ROOT, "saved"); // tests point this elsewhere: saved/ holds real work
 // A chapter's saved edits live beside the app's own settings files in saved/. Only a real project's name is ever turned into a file
 // here: before 19 Nov 2026, p=connections returned the keys file and p=spend-settings could be overwritten.
-const NOT_CHAPTERS = new Set(["connections", "models", "queue", "permissions", "spend-settings", "work", "work-times", "styles", "access"]);
+const NOT_CHAPTERS = new Set(["connections", "models", "queue", "permissions", "spend-settings", "work", "work-times", "styles", "access", "jobs"]);
 const specFile = (url) => {
   const id = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_");
   if (NOT_CHAPTERS.has(id) || !(existsSync(join(ROOT, "projects", id, "spec.json")) || existsSync(join(ROOT, "samples", id, "spec.json")))) throw Object.assign(new Error("No such project."), { code: 404 });
   return join(SAVED, id + ".json");
 };
+const boardSeen = new Map(); // project id -> { m: spec.json's time, boardAt, pages }: read again only when the file changes
 const okId = (v) => typeof v === "string" && /^[\w-]{1,80}$/.test(v);
 /** A saved chapter must look like one: pages with clean ids (ids are put into the page as they are). */
 function checkSpec(s) {
@@ -112,11 +113,13 @@ async function listProjects() {
   }
   return out;
 }
-const readingOf = (v) => (v === "ltr" ? "ltr" : "rtl"); // reading direction: a new project or book reads right to left (manga) unless it asks for left to right
+// reading direction: a new project or book reads right to left (manga) unless it asks for left to right; anything else is refused, not guessed
+const readingOf = (v) => { if (v == null || v === "" || v === "rtl") return "rtl"; if (v === "ltr") return "ltr"; throw Object.assign(new Error("The reading direction is rtl (right to left) or ltr (left to right)."), { status: 400 }); };
 async function createProject({ name, chapter, script, style, like, reading }) {
   name = String(name || "").trim().slice(0, 80); script = String(script || "");
   if (!name) throw new Error("Give the project a name.");
   if (script.trim().length < 40) throw new Error("Paste the chapter script first.");
+  reading = readingOf(reading); // before anything is made on disk
   const ch = Math.max(1, Math.min(999, parseInt(chapter, 10) || 1));
   const slug = (name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project") + "-ch" + String(ch).padStart(2, "0");
   let id = slug, n = 1; while (existsSync(join(ROOT, "projects", id)) || existsSync(join(ROOT, "samples", id))) id = slug + "-" + ++n;
@@ -523,15 +526,80 @@ async function assetCheck(job) {
     sheetNotes: (Array.isArray(got.sheet_notes) ? got.sheet_notes : []).filter((n) => n && n.name && n.what).slice(0, 20).map((n) => ({ name: String(n.name).slice(0, 80), what: String(n.what).slice(0, 400) })), verdicts }, null, 1));
   job.msg = faults.length ? `${faults.length} to look at` : "Nothing found";
 }
+/** The Toner on one page (tools/toner.py): every drawn panel's flat greys become screentone made by code, at the page's final
+ *  size, kept in <project>/art/tone/<page id>/<panel id>/ as layers with masks and one flat picture. No model, nothing paid. */
+const toneDir = (id, page) => join(projDir(id), "art", "tone", clean(page));
+async function runToner(job) {
+  const dir = projDir(job.project), out = toneDir(job.project, job.page);
+  await mkdir(out, { recursive: true });
+  const args = [join(APP, "tools/toner.py"), "page", dir, job.page, out, "--by-id", "--saved", join(SAVED, job.project + ".json")]; if (job.only) args.push("--only", job.only);
+  job.msg = job.only ? "Toning one panel" : "Toning the page";
+  await run("/usr/bin/python3", args, { timeout: 900000 }); delete job.msg;
+}
+/** What the Toner has made in a project: { [page id]: { panels: [{ id, src, box, px, of, focus, zoom, layers, baked, strokes }], check } }. */
+async function toneState(id) {
+  const out = {}, root = join(projDir(id), "art", "tone"); let pages = []; try { pages = await readdir(root); } catch { return out; }
+  for (const pg of pages) { let j; try { j = JSON.parse(await readFile(join(root, pg, "page.json"), "utf8")); } catch { continue; }
+    out[pg] = { check: j.check || null, settings: j.settings || null, panels: (j.panels || []).filter((p) => p && p.id && p.flat && existsSync(join(root, pg, p.dir, p.flat))).map((p) => ({ id: p.id, src: `art/tone/${pg}/${p.dir}/${p.flat}`, box: p.box, px: p.px, of: p.image, focus: p.focus, zoom: p.zoom, layers: p.layers || [], baked: !!(p.baked_dots && p.baked_dots.baked), strokes: p.strokes || 0 })) }; }
+  return out;
+}
+/** A break-out: one figure drawn alone on plain white, then cut out of it (tools/cutout.py), to stand above the panel borders.
+ *  Saved in <project>/art/breakouts/<id>-takeNN.png; the editor puts the newest take on the page. Codex only for now. */
+async function drawBreakout(job) {
+  const dir = projDir(job.project), out = join(dir, "art", "breakouts"), id = clean(job.bid);
+  let bible = {}; try { bible = JSON.parse(await readFile(join(dir, "bible.json"), "utf8")); } catch { /* no series settings */ }
+  const who = String(job.name || "").trim(), find = (o) => (o && Object.hasOwn(o, who) ? o[who] : null), c = find(bible.cast) || find(bible.props), person = !!find(bible.cast) || !c;
+  if (bible.strict && person && who && !(c && (c.ref || c.sheet) && c.approved !== false)) throw new Error(`Not drawn: ${who} has no approved character sheet. Add or approve it in Series.`);
+  await mkdir(out, { recursive: true });
+  let take = 1; const nm = (t, raw) => `${id}-take${String(t).padStart(2, "0")}${raw ? "-raw" : ""}.png`;
+  while (existsSync(join(out, nm(take))) || existsSync(join(out, nm(take, true)))) take++;
+  const raw = join(out, nm(take, true)), pic = join(out, nm(take)), task = join(out, `BREAKOUT_TASK_${id}.md`), ink = bible.colour ? "FULL-COLOUR" : "BLACK-AND-WHITE";
+  const sheet = c && (c.sheet || c.ref) ? join(dir, String(c.sheet || c.ref)) : "", ref = sheet && sheet.startsWith(dir + "/") && existsSync(sheet) ? sheet : "";
+  const prompt = [
+    `Use case: illustration-story. Create ONE ${ink} CUT-OUT FIGURE, portrait 1024x1536: a single ${person ? "character" : "object"}, drawn whole, on a PLAIN, FLAT, PURE WHITE background with nothing else in the picture. No scenery, no floor line, no cast shadow, no speed lines, no other people, no panel border, no frame. The figure sits complete inside the picture with a clear white margin on every side (nothing is cut off by the edge) and has a firm, closed, dark outline all the way round, so that it can be cut out cleanly and laid over a manga page.`,
+    "NO TEXT: no letters, labels, names, captions, numbers, sound effects or signatures anywhere.",
+    bible.style || "",
+    "This is a cut-out figure, not a manga page: where the style text speaks of a page, panels, backgrounds, borders, gutters or margins, ignore it. Draw the figure in exactly this art style.",
+    `WHO OR WHAT. ${who || "The figure"}${c && c.desc ? ": " + c.desc : ""}`,
+    `THE POSE. ${String(job.action || "").trim() || "A strong, clear pose."} Bold and readable as a silhouette, with real depth: the nearest part comes toward the viewer.`,
+    ref ? "The attached picture is the approved reference sheet: the same face, hair, build and clothes, in the pose asked for (never copy the sheet's own poses or layout)." : "",
+  ].filter(Boolean).join("\n\n");
+  const said = await dataFile(task.replace(/\.md$/, ".prompt.txt"), prompt); // the style, the description and the pose are the person's words: a data file, never the task
+  await writeFile(task, `# Codex task: one cut-out figure\n\nUse your built-in image generation tool at the highest quality it offers. The prompt is the whole text of the DATA file \`${said}\`: send it exactly as written, ${ref ? "with the picture listed under Attach attached" : "with no images attached"}. Save the picture to the Save as path (never overwrite a file), then stop. Write nothing else.\n\n${DATA_RULE}\n\n**Save as:** \`${raw}\`\n\n**Size:** 1024 x 1536\n${ref ? `\n**Attach:**\n1. \`${ref}\`\n` : ""}`);
+  await codex(out, `Read the task file ${task} and follow it exactly: one picture made with your built-in image generation tool, saved at the Save as path. Then stop.`);
+  if (!existsSync(raw)) throw new Error("Codex finished without saving the picture");
+  job.msg = "Drawn. Cutting it out";
+  try { await run("/usr/bin/python3", [join(APP, "tools/cutout.py"), raw, pic]); } catch (e) { throw new Error("The figure was drawn but could not be cut out of its background: " + e.message.split(": ").pop() + " Draw it again."); }
+  delete job.msg;
+}
+/** The newest finished take of every break-out in a project: { id: "art/breakouts/<id>-take02.png" }. */
+async function breakoutTakes(id) {
+  const out = {}; let names = []; try { names = await readdir(join(projDir(id), "art", "breakouts")); } catch { return out; }
+  for (const n of names.sort()) { const m = /^([\w-]+)-take(\d+)\.png$/.exec(n); if (m) out[m[1]] = "art/breakouts/" + n; }
+  return out;
+}
 async function draw(job) {
+  if (job.kind === "breakout") return drawBreakout(job);
+  if (job.kind === "tone") return runToner(job);
   if (job.kind === "check") return assetCheck(job);
   if (job.kind === "anime") return animeDraw(job); // a shot's still or a look sheet on the anime side
   if (job.kind === "paneler") return storyboard(job);
   if (job.kind === "create") return runCreate(SAVED, job);
   if (job.kind === "look") return lookAgain(job);
   if (job.kind === "sheet") return drawSheet(job);
-  const proj = projDir(job.project), saved = join(SAVED, job.project + ".json"), panels = join(proj, "art", "panels");
-  const out = await run("node", [join(APP, "tools/artist_requests.mjs"), proj, saved, join(SAVED, "refs"), "--only", job.panel, "--auto"]);
+  const proj = projDir(job.project), panels = join(proj, "art", "panels");
+  let saved = join(SAVED, job.project + ".json"), mine = "";
+  if (job.request) { // the request travels with the job: the chapter as saved now, with this panel's request put back as it was asked
+    let now = ""; try { now = JSON.parse(await readFile(join(proj, "spec.json"), "utf8")).boardAt || ""; } catch { /* unreadable: carry on */ }
+    if (now && job.boardAt && job.boardAt !== now) throw new Error("This chapter was storyboarded again after the picture was asked for. Ask for it again on the new page."); // old and new storyboards share panel ids: never draw an old request onto a new panel
+    let doc = null, q = null; const find = (d) => { for (const pg of (d && d.pages) || []) if (pg.layout) for (const c of leavesOf(pg.layout.rows).concat(pg.layout.insets || [])) if (c.id === job.panel) return c; return null; };
+    try { doc = JSON.parse(await readFile(saved, "utf8")); q = find(doc); } catch { /* no saved copy */ }
+    if (!q) { doc = JSON.parse(await readFile(join(proj, "spec.json"), "utf8")); q = find(doc); }
+    if (!q) throw new Error("That panel is no longer in the chapter.");
+    q.request = { ...job.request, status: "queued" };
+    await mkdir(join(SAVED, "jobs"), { recursive: true }); mine = join(SAVED, "jobs", `${job.project}~${job.panel}.json`); await writeFile(mine, JSON.stringify(doc)); saved = mine;
+  }
+  let out; try { out = await run("node", [join(APP, "tools/artist_requests.mjs"), proj, saved, join(SAVED, "refs"), "--only", job.panel, "--auto"]); } finally { if (mine) await rm(mine, { force: true }); }
   const lines = out.trim().split("\n"), list = lines[lines.length - 1].startsWith("[") ? JSON.parse(lines[lines.length - 1]) : [];
   if (!list.length) throw new Error("that panel has no request waiting");
   { // a series that only draws approved characters (every book starts that way): nobody is drawn from words alone
@@ -583,7 +651,7 @@ const WORKERS = Math.max(1, Math.min(4, +process.env.STUDIO_DRAWERS || 2)), runn
 let chain = Promise.resolve();
 const oneAtATime = (fn) => { const r = chain.then(fn, fn); chain = r.catch(() => {}); return r; };
 async function persist() {
-  try { await mkdir(SAVED, { recursive: true }); await writeFile(QUEUE, JSON.stringify([...running].concat(line).map((j) => ({ project: j.project, panel: j.panel, kind: j.kind, name: j.name, thing: j.thing, pid: j.pid, queued: j.queued, scene: j.scene, what: j.what, shot: j.shot, pick: j.pick, cid: j.cid, orJob: j.orJob, model: j.model, look: j.look, ok: j.ok })))); } catch { /* the queue still runs */ }
+  try { await mkdir(SAVED, { recursive: true }); await writeFile(QUEUE, JSON.stringify([...running].concat(line).map((j) => ({ project: j.project, panel: j.panel, kind: j.kind, name: j.name, thing: j.thing, pid: j.pid, queued: j.queued, scene: j.scene, what: j.what, shot: j.shot, pick: j.pick, cid: j.cid, orJob: j.orJob, model: j.model, look: j.look, ok: j.ok, request: j.request, boardAt: j.boardAt, bid: j.bid, action: j.action, page: j.page, only: j.only })))); } catch { /* the queue still runs */ }
 }
 async function pump() {
   await persist();
@@ -592,7 +660,7 @@ async function pump() {
     (async () => {
       try { job.expect = await expectFor(SAVED, job); } catch { /* shown without a bar */ }
       try { await draw(job); job.status = "done"; } catch (e) { job.status = "failed"; job.msg = String(e.message || e).slice(0, 300); }
-      job.took = Date.now() - job.at; running.delete(job); await recordDone(SAVED, job); pump();
+      job.took = Date.now() - job.at; running.delete(job); delete job.request; /* drawn or failed: the kept request has done its work */ await recordDone(SAVED, job); pump();
     })();
   }
 }
@@ -614,12 +682,12 @@ async function resumeQueue() { // jobs that were waiting, or half done, when the
 }
 
 /** What was sent, up to a limit that fits the route (1 MB unless it asks for more): nobody fills the memory or the disk with one request. */
-const body = (req, limit = 1 * MB) => readBody(req, limit);
+const body = async (req, limit = 1 * MB) => (req.sentBody = await readBody(req, limit)); // kept on the request: failed() tells a bad body from a damaged saved file by it
 
 /** A request that failed, answered with what went wrong (19 Nov 2026: every failure used to answer "404 not found" and nothing was
  * logged, so a failed save looked like a missing page). Missing file = 404; bad request = 400; too large = 413; the rest = 500, logged. */
 function failed(req, res, e) {
-  const sent = e instanceof SyntaxError && req.method !== "GET"; // a body that is not JSON is the sender's mistake; a saved file that is not JSON is ours
+  const sent = sentBadJson(req, e); // a body that is not JSON is the sender's mistake; a saved file that is not JSON is ours, also during a save
   const code = e && (e.status || (e.code === 413 ? 413 : e.code === "ENOENT" || e.code === 404 ? 404 : sent ? 400 : 500));
   const msg = code === 404 ? "not found" : sent ? "What was sent is not readable JSON." : e instanceof SyntaxError ? "A saved file could not be read: " + e.message : String((e && e.message) || e).slice(0, 300);
   if (code >= 500) console.error(new Date().toISOString(), req.method, req.url.split("?")[0], (e && e.stack) || e);
@@ -726,7 +794,9 @@ http.createServer(async (req, res) => {
       if (!existsSync(f)) return res.end(JSON.stringify({ own: false }));
       const meta = JSON.parse(await readFile(f, "utf8"));
       let cover = null; try { cover = JSON.parse(await readFile(join(ROOT, "projects", id, "cover.json"), "utf8")); } catch { /* none */ }
-      return res.end(JSON.stringify({ own: true, reading: meta.reading === "rtl" ? "rtl" : "ltr", note: meta.paneler_note || "", cover, title: meta.title || "", name: meta.name || "", chapter: meta.chapter, storyboard: job ? { status: job.status, msg: job.msg, at: job.at, now: Date.now() } : null }));
+      let boardAt = "", pages = 0; try { const sf = join(ROOT, "projects", id, "spec.json"), st = await stat(sf), was = boardSeen.get(id); // which storyboard the project holds now: an open tab compares it with its own
+        if (was && was.m === st.mtimeMs) ({ boardAt, pages } = was); else { const sp = JSON.parse(await readFile(sf, "utf8")); boardAt = sp.boardAt || ""; pages = (sp.pages || []).length; boardSeen.set(id, { m: st.mtimeMs, boardAt, pages }); } } catch { /* no spec yet */ }
+      return res.end(JSON.stringify({ own: true, boardAt, pages, reading: meta.reading === "rtl" ? "rtl" : "ltr", note: meta.paneler_note || "", cover, title: meta.title || "", name: meta.name || "", chapter: meta.chapter, storyboard: job ? { status: job.status, msg: job.msg, at: job.at, now: Date.now() } : null }));
     }
     if (url.pathname === "/api/faces/look" && req.method === "POST") { // look again at a drawn panel for people with no labelled face
       const id = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), pid = (url.searchParams.get("panel") || "").replace(/[^\w-]/g, "_"), key = id + "/look:" + pid, old = jobs.get(key);
@@ -775,11 +845,28 @@ http.createServer(async (req, res) => {
         return res.end(JSON.stringify(jobs.get(key)));
       }
     }
+    if (url.pathname === "/api/generate" && req.method === "DELETE") { // "Cancel request": a picture still waiting its turn is taken out of the line
+      const project = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), panel = (url.searchParams.get("panel") || "").replace(/[^\w-]/g, "_"), key = project + "/" + panel, job = jobs.get(key);
+      res.setHeader("content-type", "application/json");
+      if (job && job.status === "drawing") { res.statusCode = 409; return res.end(JSON.stringify({ error: "It is being drawn right now and cannot be stopped. The picture will land; you can ask for another after it." })); }
+      if (job && job.status === "waiting" && !job.kind) { const i = line.indexOf(job); if (i >= 0) line.splice(i, 1); jobs.delete(key); await persist(); return res.end(JSON.stringify({ cancelled: true })); }
+      return res.end(JSON.stringify({ cancelled: false }));
+    }
     if (url.pathname === "/api/generate" && req.method === "POST") { // start drawing a queued panel
       const project = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), panel = (url.searchParams.get("panel") || "").replace(/[^\w-]/g, "_"), key = project + "/" + panel;
       const old = jobs.get(key);
-      if (!old || old.status === "done" || old.status === "failed") { const job = { project, panel, status: "waiting", queued: Date.now(), ok: okFrom(req) }; jobs.set(key, job); line.push(job); pump(); }
-      res.setHeader("content-type", "application/json"); return res.end(JSON.stringify(jobs.get(key)));
+      // A drawing needs its request (the prompt and references the person saw), saved with the chapter. Without one the job used to be
+      // queued and fail later with a message from Node. Say so now: a chapter that was never opened in the app has nothing saved yet.
+      res.setHeader("content-type", "application/json");
+      if (!existsSync(join(projDir(project), "spec.json"))) { res.statusCode = 404; return res.end(JSON.stringify({ error: "No such project." })); }
+      let q = null, boardAt = ""; try { const sv = JSON.parse(await readFile(join(SAVED, project + ".json"), "utf8")); boardAt = sv.boardAt || ""; for (const pg of sv.pages || []) if (pg.layout) for (const c of leavesOf(pg.layout.rows).concat(pg.layout.insets || [])) if (c.id === panel) q = c; } catch { /* nothing saved */ }
+      if (!q || !q.request) { res.statusCode = 400; return res.end(JSON.stringify({ error: "This panel has no drawing request saved yet. In the app, open the chapter and press Generate on the panel; from an agent, use the draw_panels tool." })); }
+      // The request is kept with the job from here on (19 Nov 2026). It used to live only in the chapter's saved copy, so another tab's
+      // save, made from a copy without it, wiped it and the job failed with "that panel has no request waiting" (65 of 68 one night).
+      const keep = JSON.parse(JSON.stringify(q.request));
+      if (old && old.status === "waiting") { old.request = keep; old.boardAt = boardAt; await persist(); } // asked again while it waits: the newer wording is drawn
+      if (!old || old.status === "done" || old.status === "failed") { const job = { project, panel, status: "waiting", queued: Date.now(), ok: okFrom(req), request: keep, boardAt }; jobs.set(key, job); line.push(job); pump(); }
+      res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ ...jobs.get(key), request: undefined }));
     }
     if (url.pathname === "/api/check") { // the asset checker: its last answer, start a check, or the person's word on one fault
       const id = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"); res.setHeader("content-type", "application/json");
@@ -798,7 +885,7 @@ http.createServer(async (req, res) => {
     if (url.pathname === "/api/jobs") {
       const project = url.searchParams.get("p");
       res.setHeader("content-type", "application/json");
-      return res.end(JSON.stringify([...jobs.values()].filter((j) => j.project === project && j.kind !== "paneler" && j.kind !== "check").map((j) => ({ ...j, ahead: j.status === "waiting" ? line.indexOf(j) + (running.size >= WORKERS ? 1 : 0) : 0, now: Date.now() }))));
+      return res.end(JSON.stringify([...jobs.values()].filter((j) => j.project === project && j.kind !== "paneler" && j.kind !== "check").map((j) => ({ ...j, request: undefined, ahead: j.status === "waiting" ? line.indexOf(j) + (running.size >= WORKERS ? 1 : 0) : 0, now: Date.now() }))));
     }
     if (url.pathname === "/api/ref") { // uploaded reference pictures
       const f = join(SAVED, "refs", (url.searchParams.get("id") || "x").replace(/[^\w-]/g, "_") + ".json");
@@ -812,6 +899,64 @@ http.createServer(async (req, res) => {
       await writeFile(join(dir, name), await body(req, 40 * MB));
       return res.end("exported");
     }
+    if (url.pathname === "/api/tone" || url.pathname === "/api/tone/strokes") { // the Toner: GET what is toned; POST ?page= tones a page (or &panel= one panel of it); /strokes keeps what was scraped by hand
+      const q = url.searchParams, id = (q.get("p") || "").replace(/[^\w-]/g, "_"), send = (j, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store"); return res.end(JSON.stringify(j)); };
+      if (!id || !existsSync(join(ROOT, "projects", id, "spec.json"))) return send({ error: "The Toner works in a project of your own." }, 404);
+      const page = q.get("page") || "", panel = q.get("panel") || "", okId = (s) => /^[A-Za-z0-9_-]{1,60}$/.test(s);
+      if (url.pathname === "/api/tone") {
+        if (req.method === "GET") return send(await toneState(id));
+        if (req.method !== "POST") return send({ error: "GET or POST." }, 405);
+        if (!okId(page) || (panel && !okId(panel))) return send({ error: "Say which page to tone." }, 400);
+        const key = id + "/tone:" + page, old = jobs.get(key);
+        if (!old || old.status === "done" || old.status === "failed") { const job = { project: id, panel: "tone:" + page, page, ...(panel ? { only: panel } : {}), kind: "tone", status: "waiting", queued: Date.now() }; jobs.set(key, job); line.push(job); pump(); }
+        return send(jobs.get(key));
+      }
+      if (!okId(page) || !okId(panel)) return send({ error: "Say which panel." }, 400);
+      const dir = join(toneDir(id, page), clean(panel)), file = join(dir, "strokes.json");
+      if (!existsSync(join(dir, "layers.json"))) return send({ error: "That panel is not toned yet. Tone the page first." }, 404);
+      if (req.method === "GET") { let j = { strokes: [] }; try { j = JSON.parse(await readFile(file, "utf8")); } catch { /* none yet */ } return send({ size: JSON.parse(await readFile(join(dir, "layers.json"), "utf8")).size, strokes: j.strokes || [] }); }
+      if (req.method !== "PUT") return send({ error: "GET or PUT." }, 405);
+      const b = JSON.parse((await body(req, 4 * MB)).toString()); if (!Array.isArray(b.strokes)) return send({ error: "Send the strokes." }, 400);
+      const tmp = join(dir, `strokes-in-${Date.now().toString(36)}.json`); await writeFile(tmp, JSON.stringify({ size: b.size, strokes: b.strokes }));
+      let made; try { made = JSON.parse((await lockDoc(file, () => run("/usr/bin/python3", [join(APP, "tools/toner.py"), "strokes", dir, tmp], { timeout: 300000 }))).trim().split("\n").pop()); } catch (e) { return send({ error: "The tone could not be changed: " + e.message }, 500); } finally { await rm(tmp, { force: true }); }
+      await updateJson(join(toneDir(id, page), "page.json"), (j) => { const p = (j.panels || []).find((x) => x.id === panel); if (p) { p.flat = made.flat; p.strokes = made.strokes; } }).catch(() => {});
+      return send({ src: `art/tone/${clean(page)}/${clean(panel)}/${made.flat}`, strokes: made.strokes });
+    }
+    if (url.pathname === "/api/breakouts") { // break-outs: GET the newest take of each; POST { id, who, action } draws one (a figure alone, cut out of its background)
+      const id = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), send = (j, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store"); return res.end(JSON.stringify(j)); };
+      if (!id || !existsSync(join(ROOT, "projects", id, "spec.json"))) return send({ error: "Break-outs are drawn in a project of your own." }, 404);
+      if (req.method === "GET") return send(await breakoutTakes(id));
+      if (req.method === "POST") {
+        const b = JSON.parse((await body(req, MB)).toString()), bid = String(b.id || "");
+        if (!/^[A-Za-z0-9_-]{1,40}$/.test(bid)) return send({ error: "That break-out has no id." }, 400);
+        if (!String(b.who || "").trim() && !String(b.action || "").trim()) return send({ error: "Say who or what breaks out, and what they are doing." }, 400);
+        const key = id + "/breakout:" + bid, old = jobs.get(key);
+        if (!old || old.status === "done" || old.status === "failed") { const job = { project: id, panel: "breakout:" + bid, bid, name: String(b.who || "").trim().slice(0, 80), action: String(b.action || "").trim().slice(0, 600), kind: "breakout", status: "waiting", queued: Date.now() }; jobs.set(key, job); line.push(job); pump(); }
+        return send(jobs.get(key));
+      }
+    }
+    if (url.pathname === "/api/layouts") { // the person's own page layouts: saved on this computer, offered in every project
+      const f = join(SAVED, "layouts.json"), send = (j, code = 200) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store"); return res.end(JSON.stringify(j)); };
+      if (req.method === "GET") { let j = { layouts: [] }; try { j = JSON.parse(await readFile(f, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; } return send({ layouts: j.layouts || [] }); }
+      if (req.method === "DELETE") { const code = url.searchParams.get("code"); return send(await updateJson(f, (j) => { j.layouts = (j.layouts || []).filter((t) => t.code !== code); }, () => ({ layouts: [] }))); }
+      if (req.method === "POST") {
+        const b = JSON.parse((await body(req, MB)).toString()); let count = 0;
+        const num = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, Math.round(+v * 1000) / 1000)) : d);
+        const rowsOf = (rows, depth) => { if (!Array.isArray(rows) || !rows.length || rows.length > 8 || depth > 3) throw Object.assign(new Error("That is not a page layout."), { status: 400 });
+          return rows.map((r) => { if (!r || !Array.isArray(r.panels) || !r.panels.length || r.panels.length > 6) throw Object.assign(new Error("That is not a page layout."), { status: 400 });
+            return { h: num(r.h, 0.01, 100, 1), ...(+r.slant ? { slant: num(r.slant, -0.2, 0.2, 0) } : {}), ...(r.strip ? { strip: true } : {}), panels: r.panels.map((q) => { const o = { w: num(q && q.w, 0.01, 100, 1), ...(q && +q.slant ? { slant: num(q.slant, -0.2, 0.2, 0) } : {}) };
+              if (q && q.rows) o.rows = rowsOf(q.rows, depth + 1); else { count++; if (q && ["borderless", "bleed"].includes(q.type)) o.type = q.type;
+                if (q && Array.isArray(q.shape) && q.shape.length >= 3 && q.shape.length <= 64) o.shape = q.shape.map((pt) => [num(pt && pt[0], -0.5, 1.5, 0), num(pt && pt[1], -0.5, 1.5, 0)]); }
+              return o; }) }; }); };
+        let rows; try { rows = rowsOf(b.rows, 0); } catch (e) { return send({ error: e.message }, 400); }
+        if (count > 12) return send({ error: "A page layout holds at most 12 panels." }, 400);
+        let code = "";
+        const j = await updateJson(f, (d) => { d.layouts = d.layouts || []; if (d.layouts.length >= 200) throw Object.assign(new Error("You have 200 layouts of your own: remove one first."), { status: 400 });
+          let n = d.layouts.reduce((m, t) => Math.max(m, +(/^MY-(\d+)$/.exec(t.code) || [0, 0])[1]), 0) + 1; code = "MY-" + String(n).padStart(2, "0");
+          d.layouts.push({ code, name: String(b.name || "").trim().slice(0, 60) || `${count} panels, mine`, rows, at: new Date().toISOString() }); }, () => ({ layouts: [] })).catch((e) => ({ error: e.message, status: e.status || 500 }));
+        return j.error ? send({ error: j.error }, j.status) : send({ code, layouts: j.layouts });
+      }
+    }
     if (url.pathname === "/api/exports") { // the last chapter export of a project
       const proj = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj);
       if (req.method === "DELETE") { if (proj) await rm(dir, { recursive: true, force: true }); return res.end("cleared"); }
@@ -819,22 +964,23 @@ http.createServer(async (req, res) => {
       const out = []; for (const n of names) out.push({ name: n, url: `/exports/${proj}/${n}`, at: (await stat(join(dir, n))).mtimeMs });
       res.setHeader("content-type", "application/json"); return res.end(JSON.stringify(out));
     }
-    if (url.pathname === "/api/export-x") { // the exported chapter for posting: JPEGs, numbered, in sets of 20 (one set = one post)
-      const proj = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj), zip = join(SAVED, "exports", proj + "-x.zip");
-      await run("/usr/bin/python3", ["-c", `
-import sys, zipfile, os, io
-from PIL import Image
-d, per = sys.argv[1], 20
-names = sorted(n for n in os.listdir(d) if n.endswith('.png'))
-with zipfile.ZipFile(sys.argv[2], 'w', zipfile.ZIP_STORED) as z:
-    for i, n in enumerate(names):
-        im = Image.open(os.path.join(d, n)).convert('RGB'); im.thumbnail((1365, 2048), Image.LANCZOS)
-        b = io.BytesIO(); im.save(b, 'JPEG', quality=92, optimize=True)
-        sets = (len(names) + per - 1) // per
-        z.writestr((f'post-{i // per + 1:02d}/' if sets > 1 else '') + f'{i % per + 1:02d}.jpg', b.getvalue())
-`, dir, zip]);
-      res.setHeader("content-type", "application/zip"); res.setHeader("content-disposition", `attachment; filename="${proj}-for-x.zip"`);
-      return res.end(await readFile(zip));
+    if (url.pathname === "/api/export-file" || url.pathname === "/api/export-zip" || url.pathname === "/api/export-x") { // the exported pages as one download: a PDF, PNGs or JPEGs (tools/export_pages.py)
+      const q = url.searchParams, proj = (q.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj);
+      const old = url.pathname === "/api/export-x" ? { format: "jpeg", size: "web", sets: 20 } : url.pathname === "/api/export-zip" ? { format: "png" } : null; // the two older addresses still answer
+      const o = old || { format: q.get("format") || "pdf", size: q.get("size") === "web" ? "web" : "full", quality: q.get("quality") === "small" ? "small" : "best", sets: Math.max(0, Math.min(100, parseInt(q.get("sets"), 10) || 0)),
+        pages: (q.get("pages") || "").split(",").map((n) => parseInt(n, 10)).filter((n) => n > 0), rtl: q.get("rtl") === "1", title: (q.get("title") || "").slice(0, 200) };
+      if (!["pdf", "png", "jpeg"].includes(o.format)) { res.statusCode = 400; return res.end("The format is pdf, png or jpeg."); }
+      if (!proj || !existsSync(dir)) { res.statusCode = 404; return res.end("Nothing is exported yet."); }
+      o.name = proj;
+      const tmp = join(SAVED, "exports", `${proj}-download-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
+      try {
+        let made; try { made = JSON.parse((await run("/usr/bin/python3", [join(APP, "tools/export_pages.py"), dir, tmp, JSON.stringify(o)], { timeout: 600000 })).trim().split("\n").pop()); }
+        catch (e) { const none = /None of those pages/.test(e.message); res.statusCode = none ? 404 : 500; return res.end(none ? "None of those pages is exported yet." : "The export file could not be made: " + e.message); }
+        const one = (o.pages || []).length === 1 && made.kind !== "pdf" && made.kind !== "zip" ? `-page-${String(o.pages[0]).padStart(2, "0")}` : "";
+        const file = made.kind === "pdf" ? `${proj}.pdf` : made.kind === "zip" ? `${proj}-${o.format}${o.sets ? "-sets-of-" + o.sets : ""}.zip` : `${proj}${one}.${made.kind}`;
+        res.setHeader("content-type", { pdf: "application/pdf", zip: "application/zip", png: "image/png", jpg: "image/jpeg" }[made.kind]); res.setHeader("content-disposition", `attachment; filename="${file}"`);
+        return res.end(await readFile(tmp));
+      } finally { await rm(tmp, { force: true }); }
     }
     if (url.pathname === "/api/series/zip") { // every exported chapter of a book, one folder a chapter
       const id = clean(url.searchParams.get("id")), s = await readSeries(id), zip = join(SAVED, "exports", "book-" + id + ".zip");
@@ -842,12 +988,6 @@ with zipfile.ZipFile(sys.argv[2], 'w', zipfile.ZIP_STORED) as z:
       if (!pairs.length) { res.statusCode = 404; return res.end("nothing exported yet"); }
       await run("/usr/bin/python3", ["-c", "import sys,zipfile,os\nwith zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_STORED) as z:\n    for a in sys.argv[2:]:\n        k,d=a.split('=',1)\n        [z.write(os.path.join(d,n),k+'/'+n) for n in sorted(os.listdir(d)) if n.endswith('.png')]", zip, ...pairs]);
       res.setHeader("content-type", "application/zip"); res.setHeader("content-disposition", `attachment; filename="${id}-pages.zip"`);
-      return res.end(await readFile(zip));
-    }
-    if (url.pathname === "/api/export-zip") {
-      const proj = (url.searchParams.get("p") || "").replace(/[^\w-]/g, "_"), dir = join(SAVED, "exports", proj), zip = join(SAVED, "exports", proj + ".zip");
-      await run("/usr/bin/python3", ["-c", "import sys,zipfile,os\nd=sys.argv[1]\nwith zipfile.ZipFile(sys.argv[2],'w',zipfile.ZIP_STORED) as z:\n    [z.write(os.path.join(d,n),n) for n in sorted(os.listdir(d)) if n.endswith('.png')]", dir, zip]);
-      res.setHeader("content-type", "application/zip"); res.setHeader("content-disposition", `attachment; filename="${proj}-pages.zip"`);
       return res.end(await readFile(zip));
     }
     if (url.pathname.startsWith("/exports/")) { // exported pages, to open or save

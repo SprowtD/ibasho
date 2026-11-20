@@ -45,3 +45,16 @@ test("a request relayed by a proxy on this computer is not this computer: no cod
     assert.equal(r.status, 401);
   } finally { await a.stop(); }
 });
+
+test("another server on this computer (same name, another port) is another site; 20 wrong codes hold that device back", async () => {
+  const a = await startApp();
+  try {
+    assert.equal((await fetch(a.base + "/api/projects", { headers: { origin: `http://127.0.0.1:${a.port}` } })).status, 200);
+    assert.equal((await fetch(a.base + "/api/projects", { headers: { origin: `http://127.0.0.1:${a.port + 1}` } })).status, 403);
+    assert.equal((await fetch(a.base + "/api/projects", { headers: { origin: "http://127.0.0.1" } })).status, 403);
+    const { code } = await (await fetch(a.base + "/api/access")).json(), far = { "x-forwarded-for": "100.64.0.9" };
+    for (let i = 0; i < 20; i++) assert.equal((await fetch(a.base + "/api/projects", { headers: { ...far, "x-ibasho-access": "AAAA-AAAA-AAA" + (i % 9) } })).status, 401);
+    assert.equal((await fetch(a.base + "/api/projects", { headers: { ...far, "x-ibasho-access": code } })).status, 401, "even the right code waits out the ten minutes");
+    assert.equal((await fetch(a.base + "/api/projects")).status, 200, "the computer that runs it is never held back");
+  } finally { await a.stop(); }
+});

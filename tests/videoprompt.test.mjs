@@ -46,3 +46,12 @@ test("a beat that starts with the letter s keeps it; the unit 's' is still read;
     assert.match(two, /0-2 s: Stops\./); assert.match(two, /4-6 s: He leaves/);
   } finally { await a.stop(); }
 });
+
+test("beats: a time range written with 'to' needs its 's' or a mark; '2 to 3 people enter' is a beat, not a timecode", async () => {
+  const a = await startApp();
+  try {
+    makeScene(a, "s1", { shots: [{ shot_id: "S01", duration: 6, action: "A crowd.", beats: "2 to 3 people enter\n0 to 3 s she turns\n3 to 6: they bow" }] });
+    const one = await (await fetch(`${a.base}/api/anime/video-request?id=s1&shot=S01&preview=1`)).json();
+    assert.match(one.prompt, /0-2 s: 2 to 3 people enter/); assert.match(one.prompt, /0-3 s: she turns/); assert.match(one.prompt, /3-6 s: they bow/);
+  } finally { await a.stop(); }
+});
